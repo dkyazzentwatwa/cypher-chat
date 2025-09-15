@@ -1,7 +1,5 @@
 #include "Server.h"
 
-#ifdef ROLE_SERVER
-
 NimBLEServer* pServer = nullptr;
 NimBLECharacteristic* pTxCharacteristic = nullptr;
 bool deviceConnected = false;
@@ -29,10 +27,18 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
             if (pTxCharacteristic && pServer->getConnectedCount() > 0) {
                 pTxCharacteristic->setValue(rxValue);
                 pTxCharacteristic->notify(true);
+                size_t colon = rxValue.find(':');
+                if (colon != std::string::npos) {
+                    std::string unit = rxValue.substr(0, colon);
+                    std::string ack = std::string("ACK:") + unit;
+                    pTxCharacteristic->setValue(ack);
+                    pTxCharacteristic->notify(true);
+                }
             }
             char incomingMsg[32];
             snprintf(incomingMsg, sizeof(incomingMsg), "Incoming: %s", rxValue.c_str());
             snprintf(statusLine, sizeof(statusLine), "%d client(s)", pServer->getConnectedCount());
+            addToHistory(rxValue.c_str());
             oledPrint(incomingMsg, statusLine);
             beep();
         }
@@ -40,11 +46,11 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 void setupServer() {
-    oledPrint("Starting Server...", "BLEEP-SERVER");
+    oledPrint("Starting Server...", unitName.c_str());
 
-    NimBLEDevice::init("BLEEP-SERVER");
+    NimBLEDevice::init(unitName.c_str());
     NimBLEDevice::setSecurityAuth(true, true, true);
-    NimBLEDevice::setSecurityPasskey(PASSKEY);
+    NimBLEDevice::setSecurityPasskey(currentPasskey);
     NimBLEDevice::setPower(BLE_TX_POWER);
 
     pServer = NimBLEDevice::createServer();
@@ -83,7 +89,7 @@ void loopServer() {
             lastButtonPressMillis = millis();
 
             char msg[32];
-            snprintf(msg, sizeof(msg), "%s:%d:%s", "SERVER", i + 1, BUTTON_LABELS[i]);
+            snprintf(msg, sizeof(msg), "%s:%d:%s", unitName.c_str(), i + 1, BUTTON_LABELS[i]);
 
             if (pTxCharacteristic && pServer->getConnectedCount() > 0) {
                 pTxCharacteristic->setValue(std::string(msg));
@@ -93,11 +99,10 @@ void loopServer() {
             char sentMsg[32];
             snprintf(sentMsg, sizeof(sentMsg), "Sent: %s", msg);
             snprintf(statusLine, sizeof(statusLine), "%d client(s)", pServer->getConnectedCount());
+            addToHistory(msg);
             oledPrint(sentMsg, statusLine);
             beep();
             break;
         }
     }
 }
-
-#endif // ROLE_SERVER

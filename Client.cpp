@@ -1,6 +1,6 @@
 #include "Client.h"
 
-#ifndef ROLE_SERVER
+String lastSentMsg = "";
 
 NimBLEScan* pScan = nullptr;
 NimBLERemoteCharacteristic* pTxCharacteristic = nullptr;
@@ -22,6 +22,16 @@ void notifyCallback(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_
     char msg[length + 1];
     memcpy(msg, pData, length);
     msg[length] = '\0';
+    String msgStr = String(msg);
+    if (msgStr.startsWith("ACK:")) {
+        String target = msgStr.substring(4);
+        if (target == unitName) {
+            oledPrint("Delivered", "Connected to Server");
+            beep();
+        }
+        return;
+    }
+    addToHistory(msg);
     char incomingMsg[32];
     snprintf(incomingMsg, sizeof(incomingMsg), "Incoming: %s", msg);
     oledPrint(incomingMsg, "Connected to Server");
@@ -103,18 +113,18 @@ bool connectToServer() {
 void startScan() {
     if (isScanning) return;
     isScanning = true;
-    oledPrint("Scanning for server", UNIT_NAME);
+    oledPrint("Scanning for server", unitName.c_str());
     pScan->start(5, scanEnded, false);
 }
 
 void setupClient() {
     char splash[32];
-    snprintf(splash, sizeof(splash), "Starting Client %s", UNIT_NAME);
+    snprintf(splash, sizeof(splash), "Starting Client %s", unitName.c_str());
     oledPrint(splash);
 
-    NimBLEDevice::init(UNIT_NAME);
+    NimBLEDevice::init(unitName.c_str());
     NimBLEDevice::setSecurityAuth(true, true, true);
-    NimBLEDevice::setSecurityPasskey(PASSKEY);
+    NimBLEDevice::setSecurityPasskey(currentPasskey);
     NimBLEDevice::setPower(BLE_TX_POWER);
     pScan = NimBLEDevice::getScan();
     pScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallbacks());
@@ -134,11 +144,13 @@ void handleClientButtons() {
             lastButtonPressMillis = millis();
             if (pRxCharacteristic && pRxCharacteristic->canWrite()) {
                 char msg[32];
-                snprintf(msg, sizeof(msg), "%s:%d:%s", UNIT_NAME, i + 1, BUTTON_LABELS[i]);
+                snprintf(msg, sizeof(msg), "%s:%d:%s", unitName.c_str(), i + 1, BUTTON_LABELS[i]);
                 pRxCharacteristic->writeValue(std::string(msg), false);
+                addToHistory(msg);
                 char sentMsg[32];
                 snprintf(sentMsg, sizeof(sentMsg), "Sent: %s", msg);
                 oledPrint(sentMsg, "Connected to Server");
+                lastSentMsg = String(msg);
                 beep();
             }
             break;
@@ -164,5 +176,3 @@ void clientLoop() {
         handleClientButtons();
     }
 }
-
-#endif // !ROLE_SERVER
