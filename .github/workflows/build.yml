@@ -1,0 +1,16 @@
+name: Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: arduino/setup-arduino-cli@v1
+        with:
+          version: latest
+      - run: arduino-cli core update-index
+      - run: arduino-cli core install esp32:esp32
+      - run: arduino-cli lib install "NimBLE-Arduino" "Adafruit GFX Library" "Adafruit SSD1306"
+      - run: arduino-cli compile --fqbn esp32:esp32:esp32 Bleeper.ino

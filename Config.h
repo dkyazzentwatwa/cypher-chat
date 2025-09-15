@@ -1,17 +1,18 @@
 #pragma once
 
+#include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// -- ROLE SELECTION --
-// Uncomment to compile as SERVER
-// #define ROLE_SERVER
+// -- RUNTIME CONFIGURATION --
+#define DEFAULT_UNIT_NAME "ALPHA"
+#define DEFAULT_PASSKEY 123456
 
-#ifndef ROLE_SERVER
-  #define UNIT_NAME "ALPHA"
-#endif
+extern String unitName;
+extern uint32_t currentPasskey;
+extern bool isServer;
 
 // -- HARDWARE PINS & SETTINGS --
 #define I2C_SDA_PIN   21
@@ -39,8 +40,8 @@ extern const char* BUTTON_LABELS[];
 #define RX_CHARACTERISTIC_UUID "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 #define TX_CHARACTERISTIC_UUID "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 
-// Security
-#define PASSKEY 123456
+// Message history
+void addToHistory(const char* msg);
 
 // Display object
 extern Adafruit_SSD1306 display;
