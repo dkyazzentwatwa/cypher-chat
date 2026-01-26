@@ -95,9 +95,6 @@ struct GPSCoordinates {
 typedef void (*MeshMessageCallback)(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
 typedef void (*MeshPeerCallback)(const MeshPeer* peer, bool isNew);
 
-// Forward declaration for MeshPeer class (defined later in this file)
-class MeshPeer;
-
 class MeshManager {
 public:
   MeshManager();
