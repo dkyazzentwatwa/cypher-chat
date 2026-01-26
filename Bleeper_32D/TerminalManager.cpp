@@ -949,7 +949,7 @@ void TerminalManager::cmdPeers() {
     return;
   }
 
-  std::vector<MeshPeer> peers = meshMgr.getPeers();
+  std::vector<MeshPeerInfo> peers = meshMgr.getPeers();
 
   Serial.println("\n╔════════════════════════════════════════════════════════════╗");
   Serial.println("║                    Mesh Peers                               ║");
@@ -1086,7 +1086,7 @@ void TerminalManager::cmdGPS() {
   Serial.println("GPS is disabled (GPS_ENABLED=false in Config.h)");
   Serial.println("To enable:");
   Serial.println("  1. Set GPS_ENABLED to true in Config.h");
-  Serial.println("  2. Connect GPS TX to GPIO %d (GPS_RX_PIN)", GPS_RX_PIN);
+  Serial.printf("  2. Connect GPS TX to GPIO %d (GPS_RX_PIN)\n", GPS_RX_PIN);
   Serial.println("  3. Recompile and upload firmware");
 #endif
 }

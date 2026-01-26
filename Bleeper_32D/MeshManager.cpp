@@ -199,7 +199,7 @@ uint32_t MeshManager::sendTo(const uint8_t* destMac, const uint8_t* data, size_t
   markMessageSeen(packet.header.messageId);
 
   // Check if peer is known and online
-  MeshPeer* peer = findPeer(destMac);
+  MeshPeerInfo* peer = findPeer(destMac);
   if (peer && peer->isOnline && peer->hopDistance == 1) {
     // Direct send to known peer
     addEspNowPeer(destMac);
@@ -338,7 +338,7 @@ void MeshManager::onPeerUpdate(MeshPeerCallback callback) {
   _peerCallback = callback;
 }
 
-std::vector<MeshPeer> MeshManager::getPeers() const {
+std::vector<MeshPeerInfo> MeshManager::getPeers() const {
   return _peers;
 }
 
@@ -610,7 +610,7 @@ void MeshManager::updatePeer(const uint8_t* mac, int8_t rssi, const char* unitNa
   if (memcmp(mac, BROADCAST_MAC, 6) == 0) return;
 
   // Find existing peer
-  MeshPeer* peer = findPeer(mac);
+  MeshPeerInfo* peer = findPeer(mac);
   bool isNew = (peer == nullptr);
 
   if (isNew) {
@@ -618,7 +618,7 @@ void MeshManager::updatePeer(const uint8_t* mac, int8_t rssi, const char* unitNa
     if (_peers.size() >= MESH_MAX_PEERS) {
       // Remove oldest offline peer
       auto it = std::find_if(_peers.begin(), _peers.end(),
-                             [](const MeshPeer& p) { return !p.isOnline; });
+                             [](const MeshPeerInfo& p) { return !p.isOnline; });
       if (it != _peers.end()) {
         _peers.erase(it);
       } else {
@@ -627,7 +627,7 @@ void MeshManager::updatePeer(const uint8_t* mac, int8_t rssi, const char* unitNa
       }
     }
 
-    MeshPeer newPeer;
+    MeshPeerInfo newPeer;
     memset(&newPeer, 0, sizeof(newPeer));
     memcpy(newPeer.mac, mac, 6);
     _peers.push_back(newPeer);
@@ -670,7 +670,7 @@ void MeshManager::pruneOfflinePeers() {
   }
 }
 
-MeshPeer* MeshManager::findPeer(const uint8_t* mac) {
+MeshPeerInfo* MeshManager::findPeer(const uint8_t* mac) {
   for (auto& peer : _peers) {
     if (memcmp(peer.mac, mac, 6) == 0) {
       return &peer;
@@ -694,7 +694,7 @@ void MeshManager::processStoreQueue() {
     }
 
     // Check if target is now online
-    MeshPeer* peer = findPeer(_storeQueue[i].targetMac);
+    MeshPeerInfo* peer = findPeer(_storeQueue[i].targetMac);
     if (peer && peer->isOnline) {
       // Attempt delivery
       deliverStoredMessages(_storeQueue[i].targetMac);

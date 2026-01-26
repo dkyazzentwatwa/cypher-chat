@@ -101,7 +101,7 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
   }
 }
 
-void onMeshPeerUpdate(const MeshPeer* peer, bool isNew) {
+void onMeshPeerUpdate(const MeshPeerInfo* peer, bool isNew) {
   char macStr[18];
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            peer->mac[0], peer->mac[1], peer->mac[2],

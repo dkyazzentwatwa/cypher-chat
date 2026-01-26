@@ -65,7 +65,7 @@ struct __attribute__((packed)) MeshPacket {
 };
 
 // Peer info for tracking neighbors
-struct MeshPeer {
+struct MeshPeerInfo {
   uint8_t mac[6];
   int8_t rssi;                // Signal strength
   uint32_t lastSeen;          // Last heartbeat time
@@ -93,7 +93,52 @@ struct GPSCoordinates {
 
 // Callback types for mesh events
 typedef void (*MeshMessageCallback)(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
-typedef void (*MeshPeerCallback)(const MeshPeer* peer, bool isNew);
+typedef void (*MeshPeerCallback)(const MeshPeerInfo* peer, bool isNew);
+
+/**
+ * MeshPeer - Custom ESP_NOW_Peer for mesh networking
+ *
+ * Handles mesh-specific message processing and callbacks.
+ * Each peer in the mesh network is represented by this class.
+ */
+class MeshPeer : public ESP_NOW_Peer {
+public:
+  // Constructor for mesh peers
+  MeshPeer(const uint8_t *mac_addr, uint8_t channel, wifi_interface_t iface, const uint8_t *lmk)
+    : ESP_NOW_Peer(mac_addr, channel, iface, lmk)
+    , _manager(nullptr) {
+  }
+
+  // Destructor
+  virtual ~MeshPeer() {
+    remove();  // Unregister peer from ESP-NOW
+  }
+
+  // Initialize and register peer
+  bool begin() {
+    return add();  // Register with ESP-NOW
+  }
+
+  // Send message to this peer
+  bool sendMessage(const uint8_t *data, size_t len) {
+    return send(data, len) > 0;
+  }
+
+  // Set manager reference for callbacks
+  void setManager(class MeshManager *manager) {
+    _manager = manager;
+  }
+
+protected:
+  // Override: Called when data received from this peer
+  void onReceive(const uint8_t *data, size_t len, bool broadcast) override;
+
+  // Override: Called when send to this peer completes
+  void onSent(bool success) override;
+
+private:
+  class MeshManager *_manager;  // Reference to manager for callbacks
+};
 
 class MeshManager {
 public:
@@ -170,7 +215,7 @@ public:
    * Get list of known peers
    * @return Vector of peer info
    */
-  std::vector<MeshPeer> getPeers() const;
+  std::vector<MeshPeerInfo> getPeers() const;
 
   /**
    * Get count of online peers
@@ -237,7 +282,7 @@ private:
   // Peer management
   void updatePeer(const uint8_t* mac, int8_t rssi, const char* unitName, uint8_t hopDistance);
   void pruneOfflinePeers();
-  MeshPeer* findPeer(const uint8_t* mac);
+  MeshPeerInfo* findPeer(const uint8_t* mac);
 
   // Store-and-forward
   void processStoreQueue();
@@ -266,7 +311,7 @@ private:
   MeshPeerCallback _peerCallback;
 
   // Peer tracking
-  std::vector<MeshPeer> _peers;
+  std::vector<MeshPeerInfo> _peers;
 
   // Message deduplication (circular buffer of seen message IDs)
   uint32_t _seenMessages[MESH_MSG_CACHE_SIZE];
