@@ -1,0 +1,293 @@
+#pragma once
+
+#include <Arduino.h>
+#include <esp_now.h>
+#include <WiFi.h>
+#include <vector>
+#include <map>
+
+/**
+ * MeshManager - ESP-NOW based mesh networking for Cypher-Chat
+ *
+ * Features:
+ * - Multi-hop message relay with TTL
+ * - Store-and-forward for offline nodes
+ * - Message deduplication (seen cache)
+ * - Automatic peer discovery
+ * - Works alongside BLE (hybrid mode)
+ *
+ * Range: ~250m line-of-sight (vs BLE's ~30m)
+ * Latency: ~1ms per hop
+ */
+
+// Mesh protocol constants
+#define MESH_MAX_PEERS        20      // Maximum tracked peers
+#define MESH_MAX_TTL          5       // Maximum hops before discard
+#define MESH_DEFAULT_TTL      3       // Default TTL for new messages
+#define MESH_MSG_CACHE_SIZE   64      // Seen message cache (deduplication)
+#define MESH_STORE_QUEUE_SIZE 32      // Store-and-forward queue size
+#define MESH_MSG_EXPIRE_MS    300000  // Messages expire after 5 minutes
+#define MESH_PEER_TIMEOUT_MS  60000   // Peer considered offline after 60s
+#define MESH_HEARTBEAT_MS     15000   // Heartbeat interval
+#define MESH_CHANNEL          1       // WiFi channel for ESP-NOW
+
+// Message types for mesh protocol
+enum MeshMessageType : uint8_t {
+  MESH_MSG_DATA      = 0x01,  // Regular data message
+  MESH_MSG_EMERGENCY = 0x02,  // Emergency broadcast (high priority)
+  MESH_MSG_ACK       = 0x03,  // Delivery acknowledgment
+  MESH_MSG_HEARTBEAT = 0x04,  // Peer discovery/keepalive
+  MESH_MSG_FORWARD   = 0x05,  // Store-and-forward delivery
+  MESH_MSG_GPS       = 0x06   // GPS location broadcast
+};
+
+// Mesh message header (fixed 32 bytes for efficiency)
+struct __attribute__((packed)) MeshHeader {
+  uint8_t  version;           // Protocol version (0x01)
+  uint8_t  type;              // MeshMessageType
+  uint8_t  ttl;               // Time-to-live (hops remaining)
+  uint8_t  hopCount;          // Number of hops taken
+  uint32_t messageId;         // Unique message identifier
+  uint8_t  originMac[6];      // Original sender MAC
+  uint8_t  destMac[6];        // Destination MAC (broadcast: FF:FF:FF:FF:FF:FF)
+  uint8_t  lastHopMac[6];     // Previous relay node MAC
+  uint32_t timestamp;         // Message creation time (relative ms)
+  uint8_t  payloadLen;        // Length of payload
+  uint8_t  flags;             // Flags: 0x01=needsAck, 0x02=isRelay, 0x04=hasGPS
+};
+
+// Full mesh packet (header + payload)
+#define MESH_MAX_PAYLOAD 200  // ESP-NOW limit is 250 bytes
+struct __attribute__((packed)) MeshPacket {
+  MeshHeader header;
+  uint8_t payload[MESH_MAX_PAYLOAD];
+};
+
+// Peer info for tracking neighbors
+struct MeshPeer {
+  uint8_t mac[6];
+  int8_t rssi;                // Signal strength
+  uint32_t lastSeen;          // Last heartbeat time
+  uint8_t hopDistance;        // Hops to this peer (1 = direct)
+  bool isOnline;
+  char unitName[17];          // Peer's unit name
+};
+
+// Store-and-forward entry
+struct StoreForwardEntry {
+  MeshPacket packet;
+  uint8_t targetMac[6];
+  uint32_t storedTime;
+  uint8_t retryCount;
+  bool active;
+};
+
+// GPS coordinates for emergency broadcasts
+struct GPSCoordinates {
+  float latitude;
+  float longitude;
+  float altitude;
+  bool valid;
+};
+
+// Callback types for mesh events
+typedef void (*MeshMessageCallback)(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
+typedef void (*MeshPeerCallback)(const MeshPeer* peer, bool isNew);
+
+class MeshManager {
+public:
+  MeshManager();
+
+  /**
+   * Initialize ESP-NOW mesh networking
+   * @param unitName This device's identifier
+   * @param passkey Shared passkey for HMAC
+   * @return true if initialization successful
+   */
+  bool begin(const char* unitName, uint32_t passkey);
+
+  /**
+   * Stop mesh networking and release resources
+   */
+  void end();
+
+  /**
+   * Process mesh events - call from loop()
+   */
+  void update();
+
+  /**
+   * Send a message to all mesh peers (broadcast flood)
+   * @param data Message payload
+   * @param len Payload length
+   * @param type Message type
+   * @param ttl Time-to-live (default: MESH_DEFAULT_TTL)
+   * @return Message ID if sent, 0 on failure
+   */
+  uint32_t broadcast(const uint8_t* data, size_t len, MeshMessageType type = MESH_MSG_DATA, uint8_t ttl = MESH_DEFAULT_TTL);
+
+  /**
+   * Send a message to a specific peer (unicast with mesh routing)
+   * @param destMac Destination MAC address
+   * @param data Message payload
+   * @param len Payload length
+   * @param type Message type
+   * @return Message ID if sent, 0 on failure
+   */
+  uint32_t sendTo(const uint8_t* destMac, const uint8_t* data, size_t len, MeshMessageType type = MESH_MSG_DATA);
+
+  /**
+   * Send emergency broadcast with optional GPS
+   * @param message Emergency message
+   * @param gps Optional GPS coordinates
+   * @return Message ID if sent, 0 on failure
+   */
+  uint32_t sendEmergency(const char* message, const GPSCoordinates* gps = nullptr);
+
+  /**
+   * Store a message for later delivery (store-and-forward)
+   * @param destMac Destination MAC
+   * @param data Message payload
+   * @param len Payload length
+   * @return true if stored successfully
+   */
+  bool storeForDelivery(const uint8_t* destMac, const uint8_t* data, size_t len);
+
+  /**
+   * Set callback for received messages
+   * @param callback Function to call when message received
+   */
+  void onMessage(MeshMessageCallback callback);
+
+  /**
+   * Set callback for peer discovery events
+   * @param callback Function to call when peer discovered/updated
+   */
+  void onPeerUpdate(MeshPeerCallback callback);
+
+  /**
+   * Get list of known peers
+   * @return Vector of peer info
+   */
+  std::vector<MeshPeer> getPeers() const;
+
+  /**
+   * Get count of online peers
+   * @return Number of peers seen recently
+   */
+  int getOnlinePeerCount() const;
+
+  /**
+   * Get this device's MAC address
+   * @param mac Output buffer (6 bytes)
+   */
+  void getMyMac(uint8_t* mac) const;
+
+  /**
+   * Check if mesh is running
+   * @return true if initialized and running
+   */
+  bool isRunning() const { return _running; }
+
+  /**
+   * Get statistics
+   */
+  uint32_t getMessagesSent() const { return _msgsSent; }
+  uint32_t getMessagesReceived() const { return _msgsReceived; }
+  uint32_t getMessagesRelayed() const { return _msgsRelayed; }
+  uint32_t getMessagesDropped() const { return _msgsDropped; }
+
+  /**
+   * Set GPS coordinates for this device
+   * @param gps GPS coordinates
+   */
+  void setGPS(const GPSCoordinates& gps);
+
+  /**
+   * Get current GPS coordinates
+   * @return GPS coordinates (check .valid field)
+   */
+  GPSCoordinates getGPS() const { return _myGPS; }
+
+  /**
+   * Get count of stored messages pending delivery
+   * @return Number of messages in store-and-forward queue
+   */
+  int getStoredMessageCount() const;
+
+private:
+  // ESP-NOW callbacks (static for C callback)
+  static void onDataSent(const uint8_t* mac, esp_now_send_status_t status);
+  static void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len);
+
+  // Internal message handling
+  void processPacket(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
+  void handleDataMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
+  void handleEmergency(const MeshPacket* packet, const uint8_t* senderMac);
+  void handleAck(const MeshPacket* packet);
+  void handleHeartbeat(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
+
+  // Mesh routing
+  bool shouldRelay(const MeshPacket* packet);
+  void relayPacket(MeshPacket* packet);
+  bool isMessageSeen(uint32_t messageId);
+  void markMessageSeen(uint32_t messageId);
+
+  // Peer management
+  void updatePeer(const uint8_t* mac, int8_t rssi, const char* unitName, uint8_t hopDistance);
+  void pruneOfflinePeers();
+  MeshPeer* findPeer(const uint8_t* mac);
+
+  // Store-and-forward
+  void processStoreQueue();
+  void deliverStoredMessages(const uint8_t* peerMac);
+
+  // Heartbeat
+  void sendHeartbeat();
+
+  // HMAC authentication
+  bool signPacket(MeshPacket* packet);
+  bool verifyPacket(const MeshPacket* packet);
+
+  // Utility
+  uint32_t generateMessageId();
+  bool addEspNowPeer(const uint8_t* mac);
+
+  // State
+  bool _running;
+  char _unitName[17];
+  uint32_t _passkey;
+  uint8_t _myMac[6];
+  GPSCoordinates _myGPS;
+
+  // Callbacks
+  MeshMessageCallback _messageCallback;
+  MeshPeerCallback _peerCallback;
+
+  // Peer tracking
+  std::vector<MeshPeer> _peers;
+
+  // Message deduplication (circular buffer of seen message IDs)
+  uint32_t _seenMessages[MESH_MSG_CACHE_SIZE];
+  int _seenIndex;
+
+  // Store-and-forward queue
+  StoreForwardEntry _storeQueue[MESH_STORE_QUEUE_SIZE];
+
+  // Timing
+  uint32_t _lastHeartbeat;
+  uint32_t _lastPeerPrune;
+
+  // Statistics
+  uint32_t _msgsSent;
+  uint32_t _msgsReceived;
+  uint32_t _msgsRelayed;
+  uint32_t _msgsDropped;
+  uint32_t _messageIdCounter;
+
+  // Singleton instance for callbacks
+  static MeshManager* _instance;
+};
+
+// Global instance
+extern MeshManager meshMgr;

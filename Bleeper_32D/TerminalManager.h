@@ -73,6 +73,15 @@ private:
   void cmdClear();
   void cmdMenu();
 
+  // Mesh networking commands
+  void cmdMesh();
+  void cmdPeers();
+  void cmdMeshSend(const char* args);
+  void cmdMeshBroadcast(const char* args);
+
+  // GPS commands
+  void cmdGPS();
+
   // Display functions
   void displayMainMenu();
   void displaySendMenu();

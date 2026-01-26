@@ -69,6 +69,23 @@ extern const char* BUTTON_LABELS[];
 #define RX_CHARACTERISTIC_UUID "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 #define TX_CHARACTERISTIC_UUID "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 
+// -- MESH NETWORKING (ESP-NOW) --
+#define MESH_ENABLED true         // Enable mesh networking layer
+#define MESH_CHANNEL 1            // WiFi channel for ESP-NOW (1-14)
+#define MESH_MAX_PEERS 20         // Maximum tracked mesh peers
+#define MESH_DEFAULT_TTL 3        // Default hops for messages
+#define MESH_MAX_TTL 5            // Maximum hops before discard
+#define MESH_HEARTBEAT_MS 15000   // Peer discovery interval
+#define MESH_PEER_TIMEOUT_MS 60000 // Peer offline threshold
+#define MESH_STORE_QUEUE_SIZE 32  // Store-and-forward queue
+#define MESH_MSG_EXPIRE_MS 300000 // Message expiry (5 minutes)
+
+// GPS Support (optional TinyGPS++ compatible module)
+#define GPS_ENABLED false         // Set true if GPS module connected
+#define GPS_RX_PIN 16             // GPS module TX -> ESP32 RX
+#define GPS_TX_PIN 17             // GPS module RX -> ESP32 TX (if needed)
+#define GPS_BAUD 9600             // GPS module baud rate
+
 // Message history
 void addToHistory(const char* msg);
 

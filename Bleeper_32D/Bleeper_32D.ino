@@ -7,6 +7,8 @@
 #include "TerminalManager.h"
 #include "Server.h"
 #include "Client.h"
+#include "MeshManager.h"
+#include "GPSManager.h"
 
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET_PIN);
 unsigned long lastButtonPressMillis = 0;
@@ -24,6 +26,98 @@ int historyCount = 0;
 bool emergencyActive = false;
 unsigned long emergencyStartTime = 0;
 const unsigned long EMERGENCY_DURATION = 30000; // 30 seconds
+
+// Mesh networking callbacks
+#if MESH_ENABLED
+void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi) {
+  // Extract message from payload
+  char msg[128];
+  size_t len = (packet->header.payloadLen < sizeof(msg) - 1) ?
+               packet->header.payloadLen : sizeof(msg) - 1;
+  memcpy(msg, packet->payload, len);
+  msg[len] = '\0';
+
+  // Format sender MAC for display
+  char senderStr[32];
+  snprintf(senderStr, sizeof(senderStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           packet->header.originMac[0], packet->header.originMac[1],
+           packet->header.originMac[2], packet->header.originMac[3],
+           packet->header.originMac[4], packet->header.originMac[5]);
+
+  // Handle by message type
+  if (packet->header.type == MESH_MSG_EMERGENCY) {
+    // Parse emergency payload: [flags:1][gps:12?][msg:variable]
+    uint8_t flags = packet->payload[0];
+    size_t offset = 1;
+    GPSCoordinates gps = {0, 0, 0, false};
+
+    if (flags & 0x01 && packet->header.payloadLen >= 13) {
+      // Has GPS data
+      memcpy(&gps.latitude, &packet->payload[offset], 4);
+      offset += 4;
+      memcpy(&gps.longitude, &packet->payload[offset], 4);
+      offset += 4;
+      memcpy(&gps.altitude, &packet->payload[offset], 4);
+      offset += 4;
+      gps.valid = true;
+    }
+
+    // Extract message
+    size_t msgLen = packet->header.payloadLen - offset;
+    if (msgLen > sizeof(msg) - 1) msgLen = sizeof(msg) - 1;
+    memcpy(msg, &packet->payload[offset], msgLen);
+    msg[msgLen] = '\0';
+
+    // Display emergency with high priority
+    Serial.printf("\n!!! MESH EMERGENCY from %s (hops: %d, rssi: %d) !!!\n",
+                  senderStr, packet->header.hopCount, rssi);
+    Serial.printf("Message: %s\n", msg);
+    if (gps.valid) {
+      Serial.printf("GPS: %.6f, %.6f (alt: %.1fm)\n", gps.latitude, gps.longitude, gps.altitude);
+    }
+
+    // Trigger emergency indicators
+    ledMgr.flash(LED_EMERGENCY, 2000);
+    buzzerMgr.play(BUZZ_EMERGENCY);
+
+    char displayMsg[32];
+    snprintf(displayMsg, sizeof(displayMsg), "MESH EMERGENCY!");
+    oledPrint(displayMsg, msg);
+    addToHistory(msg);
+
+  } else {
+    // Regular data message
+    Serial.printf("[MESH RX] From %s (hops: %d, rssi: %d): %s\n",
+                  senderStr, packet->header.hopCount, rssi, msg);
+
+    // Display and store
+    char incomingMsg[32];
+    snprintf(incomingMsg, sizeof(incomingMsg), "[Mesh] %s", msg);
+    oledPrint("Mesh Message", msg);
+    addToHistory(msg);
+
+    ledMgr.flash(LED_MESSAGE_RX, 200);
+    buzzerMgr.play(BUZZ_MESSAGE_RX);
+  }
+}
+
+void onMeshPeerUpdate(const MeshPeer* peer, bool isNew) {
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           peer->mac[0], peer->mac[1], peer->mac[2],
+           peer->mac[3], peer->mac[4], peer->mac[5]);
+
+  if (isNew) {
+    Serial.printf("[MESH] New peer discovered: %s", macStr);
+    if (strlen(peer->unitName) > 0) {
+      Serial.printf(" (%s)", peer->unitName);
+    }
+    Serial.printf(" rssi=%d\n", peer->rssi);
+  } else if (!peer->isOnline) {
+    Serial.printf("[MESH] Peer offline: %s\n", macStr);
+  }
+}
+#endif
 
 void beep() {
   // Use BuzzerManager for button feedback
@@ -55,11 +149,41 @@ void broadcastEmergency() {
 
   oledPrint("EMERGENCY ACTIVE", "Broadcasting...");
 
-  // Send emergency message 3 times for redundancy
-  for (int i = 0; i < 3; i++) {
-    char baseMsg[64];
-    snprintf(baseMsg, sizeof(baseMsg), "%s:0:EMERGENCY", unitName.c_str());
+  char baseMsg[64];
+  snprintf(baseMsg, sizeof(baseMsg), "%s:0:EMERGENCY", unitName.c_str());
 
+#if MESH_ENABLED
+  // PRIMARY: Broadcast via mesh network for maximum range (~250m+ per hop)
+  // Mesh will relay message up to MESH_MAX_TTL hops (potentially kilometers)
+  GPSCoordinates* gpsPtr = nullptr;
+  GPSCoordinates gpsCoords;
+
+#if GPS_ENABLED
+  // Include GPS coordinates if available
+  if (gpsMgr.hasFix()) {
+    gpsCoords = gpsMgr.getCoordinates();
+    gpsPtr = &gpsCoords;
+
+    char coordStr[64];
+    gpsMgr.formatCoordinates(coordStr, sizeof(coordStr));
+    Serial.printf("EMERGENCY includes GPS: %s\n", coordStr);
+
+    char mapsUrl[80];
+    gpsMgr.formatMapsURL(mapsUrl, sizeof(mapsUrl));
+    Serial.printf("  Location: %s\n", mapsUrl);
+  }
+#endif
+
+  uint32_t meshMsgId = meshMgr.sendEmergency(baseMsg, gpsPtr);
+  if (meshMsgId > 0) {
+    Serial.printf("EMERGENCY sent via MESH (id: %08X, TTL: %d hops)\n",
+                  meshMsgId, MESH_MAX_TTL);
+  }
+#endif
+
+  // BACKUP: Also send via BLE for close-range reliability
+  // Send 3 times for redundancy on BLE channel
+  for (int i = 0; i < 3; i++) {
     // Generate HMAC
     uint8_t hmac[HMAC_SIZE];
     char passkeyStr[16];
@@ -72,7 +196,7 @@ void broadcastEmergency() {
       char authenticatedMsg[MAX_MESSAGE_SIZE];
       snprintf(authenticatedMsg, sizeof(authenticatedMsg), "%s:%s", baseMsg, hmacHex);
 
-      // Broadcast via appropriate channel
+      // Broadcast via appropriate BLE channel
       if (isServer) {
         // Server broadcasts to all clients
         extern NimBLECharacteristic* pTxCharacteristic;
@@ -94,7 +218,7 @@ void broadcastEmergency() {
   }
 
   addToHistory("EMERGENCY");
-  Serial.println("EMERGENCY BROADCAST SENT (3x redundancy)");
+  Serial.println("EMERGENCY BROADCAST SENT (Mesh + BLE 3x redundancy)");
 }
 
 void cancelEmergency() {
@@ -318,6 +442,35 @@ void setup() {
   } else {
     setupClient();
   }
+
+  // Initialize mesh networking layer (ESP-NOW)
+  // This runs alongside BLE for extended range and true mesh relay
+#if MESH_ENABLED
+  oledPrint("Starting Mesh...", "ESP-NOW");
+  if (meshMgr.begin(unitName.c_str(), currentPasskey)) {
+    Serial.println("Mesh networking enabled (ESP-NOW)");
+    Serial.printf("  - Range: ~250m (vs BLE ~30m)\n");
+    Serial.printf("  - TTL: %d hops max\n", MESH_DEFAULT_TTL);
+    Serial.printf("  - Store-forward queue: %d messages\n", MESH_STORE_QUEUE_SIZE);
+
+    // Set up mesh message callback
+    meshMgr.onMessage(onMeshMessage);
+    meshMgr.onPeerUpdate(onMeshPeerUpdate);
+  } else {
+    Serial.println("WARNING: Mesh init failed, BLE-only mode");
+  }
+#endif
+
+  // Initialize GPS module (optional)
+#if GPS_ENABLED
+  oledPrint("Starting GPS...", "Waiting for fix");
+  if (gpsMgr.begin()) {
+    Serial.println("GPS module initialized");
+    Serial.printf("  Waiting for satellite fix...\n");
+  } else {
+    Serial.println("GPS module not detected");
+  }
+#endif
 }
 
 void loop() {
@@ -341,6 +494,16 @@ void loop() {
   ledMgr.update();
   buzzerMgr.update();
   terminalMgr.update();  // Update terminal display (monitor mode)
+
+#if MESH_ENABLED
+  // Process mesh networking events
+  meshMgr.update();
+#endif
+
+#if GPS_ENABLED
+  // Process GPS data
+  gpsMgr.update();
+#endif
 
   delay(10);
 }

@@ -1,5 +1,7 @@
 #include "TerminalManager.h"
 #include "DisplayManager.h"
+#include "MeshManager.h"
+#include "GPSManager.h"
 #include <Preferences.h>
 
 // Global instance
@@ -184,6 +186,16 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
     cmdClear();
   } else if (strcmp(verb, "menu") == 0) {
     cmdMenu();
+  } else if (strcmp(verb, "mesh") == 0) {
+    cmdMesh();
+  } else if (strcmp(verb, "peers") == 0) {
+    cmdPeers();
+  } else if (strcmp(verb, "meshsend") == 0) {
+    cmdMeshSend(args);
+  } else if (strcmp(verb, "broadcast") == 0) {
+    cmdMeshBroadcast(args);
+  } else if (strcmp(verb, "gps") == 0) {
+    cmdGPS();
   } else {
     printColored("Unknown command. Type 'help' for command list.", COLOR_RED);
     Serial.println();
@@ -371,11 +383,18 @@ void TerminalManager::cmdHelp() {
 
   Serial.println("Message Commands:");
   Serial.println("  send <1-4>       Send button message (1=ACK, 2=ENROUTE, 3=NEED HELP, 4=ALL GOOD)");
-  Serial.println("  emergency        Trigger emergency broadcast");
+  Serial.println("  emergency        Trigger emergency broadcast (BLE + Mesh)");
   Serial.println("  cancel           Cancel emergency\n");
 
+  Serial.println("Mesh Networking (ESP-NOW, ~250m range):");
+  Serial.println("  mesh             Show mesh network status and statistics");
+  Serial.println("  peers            List discovered mesh peers");
+  Serial.println("  meshsend <msg>   Send message via mesh network");
+  Serial.println("  broadcast <msg>  Alias for meshsend");
+  Serial.println("  gps              Show GPS status and coordinates\n");
+
   Serial.println("Display Commands:");
-  Serial.println("  status           Show current status");
+  Serial.println("  status           Show current status (BLE + Mesh)");
   Serial.println("  messages         Show message history");
   Serial.println("  config           Show configuration");
   Serial.println("  clear            Clear screen\n");
@@ -403,6 +422,212 @@ void TerminalManager::cmdClear() {
 
 void TerminalManager::cmdMenu() {
   toggleMode();
+}
+
+// Mesh networking commands
+void TerminalManager::cmdMesh() {
+#if MESH_ENABLED
+  Serial.println("\n╔════════════════════════════════════════════════╗");
+  Serial.println("║           Mesh Network Status                  ║");
+  Serial.println("╠════════════════════════════════════════════════╣");
+
+  if (!meshMgr.isRunning()) {
+    Serial.println("║ Mesh networking: DISABLED                      ║");
+    Serial.println("╚════════════════════════════════════════════════╝\n");
+    return;
+  }
+
+  // Get MAC address
+  uint8_t mac[6];
+  meshMgr.getMyMac(mac);
+  char macStr[20];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  char line[52];
+  snprintf(line, sizeof(line), "║ My MAC: %-17s              ║", macStr);
+  Serial.println(line);
+
+  snprintf(line, sizeof(line), "║ Status: %-10s    Peers Online: %-3d    ║",
+           meshMgr.isRunning() ? "RUNNING" : "STOPPED",
+           meshMgr.getOnlinePeerCount());
+  Serial.println(line);
+
+  Serial.println("╠════════════════════════════════════════════════╣");
+
+  snprintf(line, sizeof(line), "║ Messages Sent:     %-8lu                  ║",
+           meshMgr.getMessagesSent());
+  Serial.println(line);
+
+  snprintf(line, sizeof(line), "║ Messages Received: %-8lu                  ║",
+           meshMgr.getMessagesReceived());
+  Serial.println(line);
+
+  snprintf(line, sizeof(line), "║ Messages Relayed:  %-8lu                  ║",
+           meshMgr.getMessagesRelayed());
+  Serial.println(line);
+
+  snprintf(line, sizeof(line), "║ Messages Dropped:  %-8lu                  ║",
+           meshMgr.getMessagesDropped());
+  Serial.println(line);
+
+  snprintf(line, sizeof(line), "║ Store Queue:       %-3d / %-3d messages        ║",
+           meshMgr.getStoredMessageCount(), MESH_STORE_QUEUE_SIZE);
+  Serial.println(line);
+
+  Serial.println("╚════════════════════════════════════════════════╝\n");
+#else
+  Serial.println("Mesh networking is disabled (MESH_ENABLED=false)");
+#endif
+}
+
+void TerminalManager::cmdPeers() {
+#if MESH_ENABLED
+  if (!meshMgr.isRunning()) {
+    Serial.println("Mesh networking not running.");
+    return;
+  }
+
+  std::vector<MeshPeer> peers = meshMgr.getPeers();
+
+  Serial.println("\n╔════════════════════════════════════════════════════════════╗");
+  Serial.println("║                    Mesh Peers                               ║");
+  Serial.println("╠════════════════════════════════════════════════════════════╣");
+
+  if (peers.empty()) {
+    Serial.println("║ No peers discovered yet.                                    ║");
+    Serial.println("║ Peers are discovered via heartbeat (every 15 seconds).      ║");
+  } else {
+    Serial.println("║ MAC Address       | Name       | RSSI | Hops | Status      ║");
+    Serial.println("╠════════════════════════════════════════════════════════════╣");
+
+    for (const auto& peer : peers) {
+      char macStr[18];
+      snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+               peer.mac[0], peer.mac[1], peer.mac[2],
+               peer.mac[3], peer.mac[4], peer.mac[5]);
+
+      char line[72];
+      snprintf(line, sizeof(line), "║ %-17s | %-10s | %-4d | %-4d | %-10s ║",
+               macStr,
+               strlen(peer.unitName) > 0 ? peer.unitName : "-",
+               peer.rssi,
+               peer.hopDistance,
+               peer.isOnline ? "ONLINE" : "OFFLINE");
+      Serial.println(line);
+    }
+  }
+
+  Serial.println("╚════════════════════════════════════════════════════════════╝\n");
+
+  Serial.print("Total peers: ");
+  Serial.print(peers.size());
+  Serial.print(" (");
+  Serial.print(meshMgr.getOnlinePeerCount());
+  Serial.println(" online)\n");
+#else
+  Serial.println("Mesh networking is disabled (MESH_ENABLED=false)");
+#endif
+}
+
+void TerminalManager::cmdMeshSend(const char* args) {
+#if MESH_ENABLED
+  if (!meshMgr.isRunning()) {
+    Serial.println("Mesh networking not running.");
+    return;
+  }
+
+  if (strlen(args) == 0) {
+    Serial.println("Usage: meshsend <message>");
+    return;
+  }
+
+  // Build message with unit name prefix
+  char msg[128];
+  snprintf(msg, sizeof(msg), "%s:%s", unitName.c_str(), args);
+
+  uint32_t msgId = meshMgr.broadcast((uint8_t*)msg, strlen(msg), MESH_MSG_DATA, MESH_DEFAULT_TTL);
+
+  if (msgId > 0) {
+    printColored("[MESH TX] ", COLOR_CYAN);
+    Serial.printf("Broadcast sent (id: %08X, TTL: %d)\n", msgId, MESH_DEFAULT_TTL);
+    Serial.print("  Message: ");
+    Serial.println(msg);
+  } else {
+    printColored("[MESH] ", COLOR_RED);
+    Serial.println("Failed to send broadcast");
+  }
+#else
+  Serial.println("Mesh networking is disabled (MESH_ENABLED=false)");
+#endif
+}
+
+void TerminalManager::cmdMeshBroadcast(const char* args) {
+  // Alias for meshsend for convenience
+  cmdMeshSend(args);
+}
+
+// GPS commands
+void TerminalManager::cmdGPS() {
+#if GPS_ENABLED
+  Serial.println("\n╔════════════════════════════════════════════════╗");
+  Serial.println("║              GPS Status                        ║");
+  Serial.println("╠════════════════════════════════════════════════╣");
+
+  GPSStatus status = gpsMgr.getStatus();
+  const char* statusStr;
+  switch (status) {
+    case GPS_NO_MODULE:  statusStr = "NO MODULE"; break;
+    case GPS_NO_FIX:     statusStr = "NO FIX"; break;
+    case GPS_FIX_2D:     statusStr = "2D FIX"; break;
+    case GPS_FIX_3D:     statusStr = "3D FIX"; break;
+    default:             statusStr = "UNKNOWN"; break;
+  }
+
+  char line[52];
+  snprintf(line, sizeof(line), "║ Status: %-10s  Satellites: %-3d          ║",
+           statusStr, gpsMgr.getSatellites());
+  Serial.println(line);
+
+  if (gpsMgr.hasFix()) {
+    GPSCoordinates coords = gpsMgr.getCoordinates();
+
+    snprintf(line, sizeof(line), "║ Latitude:  %11.6f                      ║", coords.latitude);
+    Serial.println(line);
+
+    snprintf(line, sizeof(line), "║ Longitude: %11.6f                      ║", coords.longitude);
+    Serial.println(line);
+
+    snprintf(line, sizeof(line), "║ Altitude:  %7.1f m                        ║", coords.altitude);
+    Serial.println(line);
+
+    snprintf(line, sizeof(line), "║ HDOP: %.1f   Speed: %.1f km/h               ║",
+             gpsMgr.getHDOP(), gpsMgr.getSpeed());
+    Serial.println(line);
+
+    unsigned long age = gpsMgr.getFixAge();
+    snprintf(line, sizeof(line), "║ Fix Age: %lu ms                            ║", age);
+    Serial.println(line);
+
+    Serial.println("╠════════════════════════════════════════════════╣");
+
+    char mapsUrl[80];
+    gpsMgr.formatMapsURL(mapsUrl, sizeof(mapsUrl));
+    Serial.print("║ ");
+    Serial.println(mapsUrl);
+  } else {
+    Serial.println("║ Waiting for satellite fix...                   ║");
+    Serial.println("║ Ensure GPS module has clear sky view.          ║");
+  }
+
+  Serial.println("╚════════════════════════════════════════════════╝\n");
+#else
+  Serial.println("GPS is disabled (GPS_ENABLED=false in Config.h)");
+  Serial.println("To enable:");
+  Serial.println("  1. Set GPS_ENABLED to true in Config.h");
+  Serial.println("  2. Connect GPS TX to GPIO %d (GPS_RX_PIN)", GPS_RX_PIN);
+  Serial.println("  3. Recompile and upload firmware");
+#endif
 }
 
 // Display functions
@@ -534,7 +759,7 @@ void TerminalManager::printStatus() {
   const char* stateStr = getStateString(state);
   int retries = connectionState.getRetryCount();
 
-  snprintf(line, sizeof(line), "║ State: %-12s            Retry: %-3d    ║",
+  snprintf(line, sizeof(line), "║ BLE State: %-10s          Retry: %-3d    ║",
            stateStr, retries);
   Serial.println(line);
 
@@ -543,6 +768,27 @@ void TerminalManager::printStatus() {
   formatUptime(uptime, sizeof(uptime));
   snprintf(line, sizeof(line), "║ Uptime: %-37s ║", uptime);
   Serial.println(line);
+
+  Serial.println("╠════════════════════════════════════════════════╣");
+
+#if MESH_ENABLED
+  // Mesh status
+  if (meshMgr.isRunning()) {
+    snprintf(line, sizeof(line), "║ Mesh: ACTIVE        Peers Online: %-3d        ║",
+             meshMgr.getOnlinePeerCount());
+    Serial.println(line);
+
+    snprintf(line, sizeof(line), "║ Mesh TX: %-6lu   RX: %-6lu   Relay: %-6lu ║",
+             meshMgr.getMessagesSent(),
+             meshMgr.getMessagesReceived(),
+             meshMgr.getMessagesRelayed());
+    Serial.println(line);
+  } else {
+    Serial.println("║ Mesh: DISABLED                                 ║");
+  }
+#else
+  Serial.println("║ Mesh: NOT COMPILED                             ║");
+#endif
 
   Serial.println("╚════════════════════════════════════════════════╝\n");
 }
