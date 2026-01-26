@@ -16,6 +16,44 @@ extern void broadcastEmergency();
 extern void cancelEmergency();
 extern bool emergencyActive;
 
+// Command registry - all available commands with metadata
+const CommandDesc TerminalManager::commands[] = {
+  // Message commands
+  {"send",      "s",    "<1-4>",    "Send button message (1=ACK, 2=ENROUTE, 3=HELP, 4=OK)", CAT_MESSAGE},
+  {"emergency", "sos",  nullptr,    "Trigger emergency broadcast (BLE + Mesh)",             CAT_MESSAGE},
+  {"cancel",    nullptr, nullptr,   "Cancel active emergency",                              CAT_MESSAGE},
+
+  // Mesh commands
+  {"mesh",      "m",    nullptr,    "Show mesh network status and statistics",              CAT_MESH},
+  {"peers",     "p",    nullptr,    "List discovered mesh peers",                           CAT_MESH},
+  {"meshsend",  "ms",   "<msg>",    "Send message via mesh network",                        CAT_MESH},
+  {"broadcast", "bc",   "<msg>",    "Broadcast message to all mesh peers",                  CAT_MESH},
+  {"gps",       nullptr, nullptr,   "Show GPS status and coordinates",                      CAT_MESH},
+
+  // Display commands
+  {"status",    "st",   nullptr,    "Show current device status",                           CAT_DISPLAY},
+  {"messages",  "msg",  nullptr,    "Show message history",                                 CAT_DISPLAY},
+  {"config",    "cfg",  nullptr,    "Show current configuration",                           CAT_DISPLAY},
+
+  // Configuration commands
+  {"name",      nullptr, "<name>",  "Change unit name",                                     CAT_CONFIG},
+  {"passkey",   "pk",   "<6dig>",   "Change passkey (requires restart)",                    CAT_CONFIG},
+  {"mode",      nullptr, "<mode>",  "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
+  {"ansi",      nullptr, "<on/off>", "Enable/disable ANSI colors",                          CAT_CONFIG},
+
+  // System commands
+  {"help",      "h",    "[cmd]",    "Show help (optionally for specific command)",          CAT_SYSTEM},
+  {"clear",     "cls",  nullptr,    "Clear terminal screen",                                CAT_SYSTEM},
+  {"menu",      nullptr, nullptr,   "Switch to interactive menu mode",                      CAT_SYSTEM},
+  {"history",   "hist", nullptr,    "Show command history",                                 CAT_SYSTEM},
+  {"restart",   "reboot", nullptr,  "Restart the device",                                   CAT_SYSTEM},
+  {"uptime",    nullptr, nullptr,   "Show system uptime",                                   CAT_SYSTEM},
+  {"memory",    "mem",  nullptr,    "Show memory usage",                                    CAT_SYSTEM},
+  {"version",   "ver",  nullptr,    "Show firmware version",                                CAT_SYSTEM},
+};
+
+const int TerminalManager::numCommands = sizeof(commands) / sizeof(commands[0]);
+
 void TerminalManager::begin() {
   if (!TERMINAL_ENABLED) {
     enabled = false;
@@ -26,8 +64,20 @@ void TerminalManager::begin() {
   inputPos = 0;
   menuState = MENU_NONE;
   mode = TERMINAL_DEFAULT_MODE;
-  ansiEnabled = true;  // Auto-detect later
+  ansiEnabled = true;
   lastUpdate = 0;
+
+  // Initialize command history
+  historyCount = 0;
+  historyIndex = 0;
+  browsingHistory = false;
+  for (int i = 0; i < TERM_HISTORY_SIZE; i++) {
+    history[i][0] = '\0';
+  }
+
+  // Initialize escape sequence parser
+  escapeState = 0;
+  escapePos = 0;
 
   loadConfig();  // Load saved preferences
 
@@ -35,7 +85,8 @@ void TerminalManager::begin() {
   printBanner();
 
   Serial.println();
-  Serial.println("Press 'M' for menu or any other key for command mode...");
+  Serial.println("Press 'M' for menu, or wait for command mode...");
+  Serial.println("(Use UP/DOWN arrows for history, TAB for completion)");
 
   // Wait 3 seconds for mode selection
   unsigned long start = millis();
@@ -47,7 +98,7 @@ void TerminalManager::begin() {
         displayMainMenu();
       } else {
         menuState = MENU_NONE;
-        Serial.println("Command mode. Type 'help' for commands or 'menu' to switch.");
+        Serial.println("\nCommand mode. Type 'help' for commands.");
         printPrompt();
       }
       return;
@@ -56,7 +107,7 @@ void TerminalManager::begin() {
 
   // Default to command mode
   menuState = MENU_NONE;
-  Serial.println("\nCommand mode. Type 'help' for commands or 'menu' to switch.");
+  Serial.println("\nCommand mode. Type 'help' for commands.");
   printPrompt();
 }
 
@@ -92,13 +143,37 @@ void TerminalManager::poll() {
         handleMenuInput(c);
       }
     } else {
+      // Handle escape sequences (arrow keys, etc.)
+      if (escapeState > 0) {
+        handleEscapeSequence(c);
+        continue;
+      }
+
+      // Check for escape character start
+      if (c == 0x1B) {  // ESC
+        escapeState = 1;
+        escapePos = 0;
+        continue;
+      }
+
+      // Tab completion
+      if (c == '\t') {
+        handleTabCompletion();
+        continue;
+      }
+
       // Command mode - line-based input
       if (c == '\n' || c == '\r') {
         if (inputPos > 0) {
           inputBuffer[inputPos] = '\0';
           Serial.println();  // New line after command
+          addToHistory(inputBuffer);
           processCommand(inputBuffer);
           inputPos = 0;
+          browsingHistory = false;
+          printPrompt();
+        } else {
+          Serial.println();
           printPrompt();
         }
       } else if (c == 0x08 || c == 0x7F) {  // Backspace
@@ -106,12 +181,212 @@ void TerminalManager::poll() {
           inputPos--;
           Serial.print("\b \b");  // Erase character
         }
-      } else if (inputPos < sizeof(inputBuffer) - 1 && c >= 0x20) {
+      } else if (c == 0x03) {  // Ctrl+C
+        Serial.println("^C");
+        inputPos = 0;
+        browsingHistory = false;
+        printPrompt();
+      } else if (c == 0x0C) {  // Ctrl+L (clear screen)
+        cmdClear();
+        printPrompt();
+        // Reprint current input
+        Serial.print(inputBuffer);
+      } else if (inputPos < TERM_MAX_CMD_LEN - 1 && c >= 0x20) {
         inputBuffer[inputPos++] = c;
+        inputBuffer[inputPos] = '\0';
         Serial.write(c);  // Echo
+        browsingHistory = false;
       }
     }
   }
+}
+
+void TerminalManager::handleEscapeSequence(char c) {
+  if (escapeState == 1) {
+    if (c == '[') {
+      escapeState = 2;
+      escapeBuffer[escapePos++] = c;
+    } else {
+      // Not a CSI sequence, reset
+      escapeState = 0;
+    }
+    return;
+  }
+
+  if (escapeState == 2) {
+    escapeBuffer[escapePos++] = c;
+    escapeBuffer[escapePos] = '\0';
+
+    // Check for complete sequences
+    if (c >= 'A' && c <= 'D') {
+      // Arrow keys: A=up, B=down, C=right, D=left
+      handleSpecialKey(escapeBuffer);
+      escapeState = 0;
+      escapePos = 0;
+    } else if (c == '~') {
+      // Other keys like Home, End, Delete
+      handleSpecialKey(escapeBuffer);
+      escapeState = 0;
+      escapePos = 0;
+    } else if (escapePos >= 6) {
+      // Sequence too long, abort
+      escapeState = 0;
+      escapePos = 0;
+    }
+  }
+}
+
+void TerminalManager::handleSpecialKey(const char* seq) {
+  if (strcmp(seq, "[A") == 0) {
+    // Up arrow - previous command
+    navigateHistory(-1);
+  } else if (strcmp(seq, "[B") == 0) {
+    // Down arrow - next command
+    navigateHistory(1);
+  } else if (strcmp(seq, "[C") == 0) {
+    // Right arrow - move cursor right (not implemented for simplicity)
+  } else if (strcmp(seq, "[D") == 0) {
+    // Left arrow - move cursor left (not implemented for simplicity)
+  } else if (strcmp(seq, "[3~") == 0) {
+    // Delete key - same as backspace for now
+    if (inputPos > 0) {
+      inputPos--;
+      Serial.print("\b \b");
+    }
+  }
+}
+
+void TerminalManager::addToHistory(const char* cmd) {
+  if (cmd == nullptr || strlen(cmd) == 0) return;
+
+  // Don't add duplicates of the last command
+  if (historyCount > 0) {
+    int lastIdx = (historyCount - 1) % TERM_HISTORY_SIZE;
+    if (strcmp(history[lastIdx], cmd) == 0) return;
+  }
+
+  // Add to circular buffer
+  int idx = historyCount % TERM_HISTORY_SIZE;
+  strncpy(history[idx], cmd, TERM_MAX_CMD_LEN - 1);
+  history[idx][TERM_MAX_CMD_LEN - 1] = '\0';
+  historyCount++;
+  historyIndex = historyCount;  // Reset to end
+}
+
+void TerminalManager::navigateHistory(int direction) {
+  if (historyCount == 0) return;
+
+  int newIndex = historyIndex + direction;
+
+  // Clamp to valid range
+  int minIndex = (historyCount > TERM_HISTORY_SIZE) ? historyCount - TERM_HISTORY_SIZE : 0;
+  if (newIndex < minIndex) newIndex = minIndex;
+  if (newIndex > historyCount) newIndex = historyCount;
+
+  if (newIndex == historyIndex) return;  // No change
+
+  historyIndex = newIndex;
+  browsingHistory = true;
+
+  // Clear current line
+  clearInputLine();
+
+  // Show history entry or empty line
+  if (historyIndex < historyCount) {
+    int idx = historyIndex % TERM_HISTORY_SIZE;
+    strcpy(inputBuffer, history[idx]);
+    inputPos = strlen(inputBuffer);
+    Serial.print(inputBuffer);
+  } else {
+    inputBuffer[0] = '\0';
+    inputPos = 0;
+  }
+}
+
+void TerminalManager::clearInputLine() {
+  // Move cursor back and clear
+  for (size_t i = 0; i < inputPos; i++) {
+    Serial.print("\b \b");
+  }
+  inputPos = 0;
+  inputBuffer[0] = '\0';
+}
+
+void TerminalManager::handleTabCompletion() {
+  if (inputPos == 0) {
+    // Show all commands
+    Serial.println();
+    cmdHelp("");
+    printPrompt();
+    return;
+  }
+
+  inputBuffer[inputPos] = '\0';
+
+  // Find matching commands
+  const CommandDesc* matches[10];
+  int matchCount = findMatchingCommands(inputBuffer, matches, 10);
+
+  if (matchCount == 0) {
+    // No matches - beep (if terminal supports it)
+    Serial.print('\a');
+  } else if (matchCount == 1) {
+    // Single match - complete it
+    clearInputLine();
+    strcpy(inputBuffer, matches[0]->name);
+    inputPos = strlen(inputBuffer);
+    Serial.print(inputBuffer);
+
+    // Add space if no arguments expected
+    if (matches[0]->args == nullptr) {
+      inputBuffer[inputPos++] = ' ';
+      inputBuffer[inputPos] = '\0';
+      Serial.print(' ');
+    }
+  } else {
+    // Multiple matches - show them
+    Serial.println();
+    for (int i = 0; i < matchCount; i++) {
+      Serial.print("  ");
+      printColored(matches[i]->name, COLOR_CYAN);
+      if (matches[i]->alias) {
+        Serial.print(" (");
+        Serial.print(matches[i]->alias);
+        Serial.print(")");
+      }
+      Serial.println();
+    }
+    printPrompt();
+    Serial.print(inputBuffer);  // Restore input
+  }
+}
+
+int TerminalManager::findMatchingCommands(const char* prefix, const CommandDesc** matches, int maxMatches) {
+  int count = 0;
+  size_t prefixLen = strlen(prefix);
+
+  for (int i = 0; i < numCommands && count < maxMatches; i++) {
+    // Check primary name
+    if (strncmp(commands[i].name, prefix, prefixLen) == 0) {
+      matches[count++] = &commands[i];
+      continue;
+    }
+    // Check alias
+    if (commands[i].alias && strncmp(commands[i].alias, prefix, prefixLen) == 0) {
+      matches[count++] = &commands[i];
+    }
+  }
+
+  return count;
+}
+
+const char* TerminalManager::resolveAlias(const char* cmd) {
+  for (int i = 0; i < numCommands; i++) {
+    if (commands[i].alias && strcmp(commands[i].alias, cmd) == 0) {
+      return commands[i].name;
+    }
+  }
+  return cmd;  // Return original if no alias found
 }
 
 void TerminalManager::update() {
@@ -156,49 +431,70 @@ void TerminalManager::parseCommand(const char* cmd, char* verb, char* args) {
 void TerminalManager::executeCommand(const char* verb, const char* args) {
   if (strlen(verb) == 0) return;
 
-  if (strcmp(verb, "send") == 0) {
+  // Resolve alias to primary command name
+  const char* cmd = resolveAlias(verb);
+
+  // Message commands
+  if (strcmp(cmd, "send") == 0) {
     cmdSend(args);
-  } else if (strcmp(verb, "emergency") == 0) {
+  } else if (strcmp(cmd, "emergency") == 0) {
     cmdEmergency();
-  } else if (strcmp(verb, "cancel") == 0) {
+  } else if (strcmp(cmd, "cancel") == 0) {
     cmdCancel();
-  } else if (strcmp(verb, "status") == 0) {
-    cmdStatus();
-  } else if (strcmp(verb, "messages") == 0) {
-    cmdMessages();
-  } else if (strcmp(verb, "config") == 0) {
-    cmdConfig();
-  } else if (strcmp(verb, "name") == 0) {
-    cmdName(args);
-  } else if (strcmp(verb, "passkey") == 0) {
-    cmdPasskey(args);
-  } else if (strcmp(verb, "mode") == 0) {
-    cmdMode(args);
-  } else if (strcmp(verb, "restart") == 0) {
-    cmdRestart();
-  } else if (strcmp(verb, "uptime") == 0) {
-    cmdUptime();
-  } else if (strcmp(verb, "memory") == 0) {
-    cmdMemory();
-  } else if (strcmp(verb, "help") == 0) {
-    cmdHelp();
-  } else if (strcmp(verb, "clear") == 0) {
-    cmdClear();
-  } else if (strcmp(verb, "menu") == 0) {
-    cmdMenu();
-  } else if (strcmp(verb, "mesh") == 0) {
+  }
+  // Mesh commands
+  else if (strcmp(cmd, "mesh") == 0) {
     cmdMesh();
-  } else if (strcmp(verb, "peers") == 0) {
+  } else if (strcmp(cmd, "peers") == 0) {
     cmdPeers();
-  } else if (strcmp(verb, "meshsend") == 0) {
+  } else if (strcmp(cmd, "meshsend") == 0) {
     cmdMeshSend(args);
-  } else if (strcmp(verb, "broadcast") == 0) {
+  } else if (strcmp(cmd, "broadcast") == 0) {
     cmdMeshBroadcast(args);
-  } else if (strcmp(verb, "gps") == 0) {
+  } else if (strcmp(cmd, "gps") == 0) {
     cmdGPS();
-  } else {
-    printColored("Unknown command. Type 'help' for command list.", COLOR_RED);
-    Serial.println();
+  }
+  // Display commands
+  else if (strcmp(cmd, "status") == 0) {
+    cmdStatus();
+  } else if (strcmp(cmd, "messages") == 0) {
+    cmdMessages();
+  } else if (strcmp(cmd, "config") == 0) {
+    cmdConfig();
+  }
+  // Configuration commands
+  else if (strcmp(cmd, "name") == 0) {
+    cmdName(args);
+  } else if (strcmp(cmd, "passkey") == 0) {
+    cmdPasskey(args);
+  } else if (strcmp(cmd, "mode") == 0) {
+    cmdMode(args);
+  } else if (strcmp(cmd, "ansi") == 0) {
+    cmdAnsi(args);
+  }
+  // System commands
+  else if (strcmp(cmd, "help") == 0) {
+    cmdHelp(args);
+  } else if (strcmp(cmd, "clear") == 0) {
+    cmdClear();
+  } else if (strcmp(cmd, "menu") == 0) {
+    cmdMenu();
+  } else if (strcmp(cmd, "history") == 0) {
+    cmdHistory();
+  } else if (strcmp(cmd, "restart") == 0) {
+    cmdRestart();
+  } else if (strcmp(cmd, "uptime") == 0) {
+    cmdUptime();
+  } else if (strcmp(cmd, "memory") == 0) {
+    cmdMemory();
+  } else if (strcmp(cmd, "version") == 0) {
+    cmdVersion();
+  }
+  // Unknown command
+  else {
+    printColored("Unknown command: ", COLOR_RED);
+    Serial.println(verb);
+    Serial.println("Type 'help' for available commands, or use TAB for completion.");
   }
 }
 
@@ -207,10 +503,10 @@ void TerminalManager::handleMenuInput(char input) {
     case MENU_MAIN:
       switch (input) {
         case '1': menuState = MENU_SEND; displaySendMenu(); break;
-        case '2': cmdStatus(); displayMainMenu(); break;
-        case '3': cmdMessages(); displayMainMenu(); break;
+        case '2': cmdStatus(); delay(2000); displayMainMenu(); break;
+        case '3': menuState = MENU_MESH; displayMeshMenu(); break;
         case '4': menuState = MENU_CONFIG; displayConfigMenu(); break;
-        case '5': cmdEmergency(); delay(1000); displayMainMenu(); break;
+        case '5': cmdEmergency(); delay(2000); displayMainMenu(); break;
         case '6': cmdMenu(); break;  // Switch to command mode
         case '0': menuState = MENU_NONE; Serial.println("Exiting menu mode."); printPrompt(); break;
         default: Serial.println("Invalid choice."); delay(500); displayMainMenu(); break;
@@ -227,6 +523,16 @@ void TerminalManager::handleMenuInput(char input) {
       } else if (input == '0') {
         menuState = MENU_MAIN;
         displayMainMenu();
+      }
+      break;
+
+    case MENU_MESH:
+      switch (input) {
+        case '1': cmdMesh(); delay(2000); displayMeshMenu(); break;
+        case '2': cmdPeers(); delay(3000); displayMeshMenu(); break;
+        case '3': cmdGPS(); delay(2000); displayMeshMenu(); break;
+        case '0': menuState = MENU_MAIN; displayMainMenu(); break;
+        default: Serial.println("Invalid choice."); delay(500); displayMeshMenu(); break;
       }
       break;
 
@@ -377,39 +683,194 @@ void TerminalManager::cmdMemory() {
   Serial.println("KB");
 }
 
-void TerminalManager::cmdHelp() {
-  Serial.println("\nAvailable Commands:");
-  Serial.println("==================\n");
+void TerminalManager::cmdHelp(const char* args) {
+  // If a specific command is requested, show detailed help
+  if (args && strlen(args) > 0) {
+    const char* cmdName = resolveAlias(args);
 
-  Serial.println("Message Commands:");
-  Serial.println("  send <1-4>       Send button message (1=ACK, 2=ENROUTE, 3=NEED HELP, 4=ALL GOOD)");
-  Serial.println("  emergency        Trigger emergency broadcast (BLE + Mesh)");
-  Serial.println("  cancel           Cancel emergency\n");
+    for (int i = 0; i < numCommands; i++) {
+      if (strcmp(commands[i].name, cmdName) == 0) {
+        printCommandHelp(&commands[i]);
+        return;
+      }
+    }
 
-  Serial.println("Mesh Networking (ESP-NOW, ~250m range):");
-  Serial.println("  mesh             Show mesh network status and statistics");
-  Serial.println("  peers            List discovered mesh peers");
-  Serial.println("  meshsend <msg>   Send message via mesh network");
-  Serial.println("  broadcast <msg>  Alias for meshsend");
-  Serial.println("  gps              Show GPS status and coordinates\n");
+    printColored("Unknown command: ", COLOR_RED);
+    Serial.println(args);
+    Serial.println("Use 'help' without arguments to see all commands.");
+    return;
+  }
 
-  Serial.println("Display Commands:");
-  Serial.println("  status           Show current status (BLE + Mesh)");
-  Serial.println("  messages         Show message history");
-  Serial.println("  config           Show configuration");
-  Serial.println("  clear            Clear screen\n");
+  // Show full help organized by category
+  Serial.println();
+  printColored("╔══════════════════════════════════════════════════════════════╗\n", COLOR_CYAN);
+  printColored("║              CYPHER-CHAT TERMINAL COMMANDS                   ║\n", COLOR_CYAN);
+  printColored("╚══════════════════════════════════════════════════════════════╝\n", COLOR_CYAN);
 
-  Serial.println("Configuration:");
-  Serial.println("  name <name>      Change unit name");
-  Serial.println("  passkey <6dig>   Change passkey (requires restart)");
-  Serial.println("  mode <mode>      Set terminal mode (quiet/normal/verbose/monitor)\n");
+  Serial.println();
+  Serial.println("Shortcuts: UP/DOWN arrows for history, TAB for completion");
+  Serial.println("           Type 'help <command>' for detailed info");
+  Serial.println();
 
-  Serial.println("System:");
-  Serial.println("  restart          Restart device");
-  Serial.println("  uptime           Show system uptime");
-  Serial.println("  memory           Show memory usage");
-  Serial.println("  help             Show this help");
-  Serial.println("  menu             Switch to interactive menu mode\n");
+  printCategoryHelp(CAT_MESSAGE, "Message Commands");
+  printCategoryHelp(CAT_MESH, "Mesh Networking (ESP-NOW, ~250m range)");
+  printCategoryHelp(CAT_DISPLAY, "Display Commands");
+  printCategoryHelp(CAT_CONFIG, "Configuration");
+  printCategoryHelp(CAT_SYSTEM, "System Commands");
+}
+
+void TerminalManager::printCategoryHelp(CmdCategory cat, const char* title) {
+  printColored(title, COLOR_YELLOW);
+  Serial.println(":");
+
+  for (int i = 0; i < numCommands; i++) {
+    if (commands[i].category == cat) {
+      Serial.print("  ");
+      printColored(commands[i].name, COLOR_GREEN);
+
+      // Pad to 12 chars
+      int padding = 12 - strlen(commands[i].name);
+      for (int j = 0; j < padding; j++) Serial.print(' ');
+
+      // Show arguments if any
+      if (commands[i].args) {
+        printColored(commands[i].args, COLOR_CYAN);
+        padding = 10 - strlen(commands[i].args);
+        for (int j = 0; j < padding; j++) Serial.print(' ');
+      } else {
+        Serial.print("          ");  // 10 spaces
+      }
+
+      // Show alias
+      if (commands[i].alias) {
+        Serial.print("[");
+        printColored(commands[i].alias, COLOR_MAGENTA);
+        Serial.print("] ");
+      } else {
+        Serial.print("     ");
+      }
+
+      // Description
+      Serial.println(commands[i].description);
+    }
+  }
+  Serial.println();
+}
+
+void TerminalManager::printCommandHelp(const CommandDesc* cmd) {
+  Serial.println();
+  printColored("Command: ", COLOR_CYAN);
+  printColored(cmd->name, COLOR_GREEN);
+  Serial.println();
+
+  if (cmd->alias) {
+    printColored("Alias:   ", COLOR_CYAN);
+    printColored(cmd->alias, COLOR_MAGENTA);
+    Serial.println();
+  }
+
+  if (cmd->args) {
+    printColored("Usage:   ", COLOR_CYAN);
+    Serial.print(cmd->name);
+    Serial.print(" ");
+    printColored(cmd->args, COLOR_YELLOW);
+    Serial.println();
+  }
+
+  printColored("Info:    ", COLOR_CYAN);
+  Serial.println(cmd->description);
+
+  // Additional usage examples for specific commands
+  if (strcmp(cmd->name, "send") == 0) {
+    Serial.println("\nExamples:");
+    Serial.println("  send 1    - Send ACK");
+    Serial.println("  send 2    - Send ENROUTE");
+    Serial.println("  send 3    - Send NEED HELP");
+    Serial.println("  send 4    - Send ALL GOOD");
+    Serial.println("  s 2       - Using alias");
+  } else if (strcmp(cmd->name, "mode") == 0) {
+    Serial.println("\nModes:");
+    Serial.println("  quiet   - Errors only");
+    Serial.println("  normal  - Status + messages (default)");
+    Serial.println("  verbose - Full debug output");
+    Serial.println("  monitor - Live dashboard (1Hz refresh)");
+  } else if (strcmp(cmd->name, "meshsend") == 0) {
+    Serial.println("\nExamples:");
+    Serial.println("  meshsend Hello everyone");
+    Serial.println("  ms Need assistance at north gate");
+  }
+
+  Serial.println();
+}
+
+void TerminalManager::cmdHistory() {
+  Serial.println("\nCommand History:");
+  Serial.println("================");
+
+  if (historyCount == 0) {
+    Serial.println("(no commands in history)");
+    return;
+  }
+
+  int start = (historyCount > TERM_HISTORY_SIZE) ? historyCount - TERM_HISTORY_SIZE : 0;
+  for (int i = start; i < historyCount; i++) {
+    int idx = i % TERM_HISTORY_SIZE;
+    Serial.printf("  %3d: %s\n", i + 1, history[idx]);
+  }
+  Serial.println();
+}
+
+void TerminalManager::cmdVersion() {
+  Serial.println();
+  printColored("╔════════════════════════════════════════════════╗\n", COLOR_CYAN);
+  printColored("║           CYPHER-CHAT Firmware                 ║\n", COLOR_CYAN);
+  printColored("╚════════════════════════════════════════════════╝\n", COLOR_CYAN);
+
+  Serial.print("Version:    ");
+  printColored("2.0.0-mesh\n", COLOR_GREEN);
+
+  Serial.print("Build:      ");
+  Serial.println(__DATE__ " " __TIME__);
+
+  Serial.print("Platform:   ");
+  Serial.println("ESP32");
+
+  Serial.print("Features:   ");
+#if MESH_ENABLED
+  printColored("MESH ", COLOR_GREEN);
+#else
+  printColored("mesh ", COLOR_DIM);
+#endif
+#if GPS_ENABLED
+  printColored("GPS ", COLOR_GREEN);
+#else
+  printColored("gps ", COLOR_DIM);
+#endif
+  printColored("BLE ", COLOR_GREEN);
+  printColored("HMAC-SHA256\n", COLOR_GREEN);
+
+  Serial.println();
+}
+
+void TerminalManager::cmdAnsi(const char* args) {
+  if (args == nullptr || strlen(args) == 0) {
+    Serial.print("ANSI colors: ");
+    Serial.println(ansiEnabled ? "enabled" : "disabled");
+    Serial.println("Usage: ansi <on|off>");
+    return;
+  }
+
+  if (strcmp(args, "on") == 0 || strcmp(args, "1") == 0) {
+    ansiEnabled = true;
+    saveConfig();
+    printColored("ANSI colors enabled\n", COLOR_GREEN);
+  } else if (strcmp(args, "off") == 0 || strcmp(args, "0") == 0) {
+    ansiEnabled = false;
+    saveConfig();
+    Serial.println("ANSI colors disabled");
+  } else {
+    Serial.println("Usage: ansi <on|off>");
+  }
 }
 
 void TerminalManager::cmdClear() {
@@ -637,13 +1098,13 @@ void TerminalManager::displayMainMenu() {
   }
 
   Serial.println("╔════════════════════════════════════════════════╗");
-  Serial.println("║          Bleeper_32D Control Menu              ║");
+  Serial.println("║          CYPHER-CHAT Control Menu              ║");
   Serial.println("╠════════════════════════════════════════════════╣");
   Serial.println("║ [1] Send Message                               ║");
   Serial.println("║ [2] View Status                                ║");
-  Serial.println("║ [3] View Messages                              ║");
+  Serial.println("║ [3] Mesh Network                               ║");
   Serial.println("║ [4] Configuration                              ║");
-  Serial.println("║ [5] Emergency Broadcast                        ║");
+  Serial.println("║ [5] EMERGENCY Broadcast                        ║");
   Serial.println("║ [6] Switch to Command Mode                     ║");
   Serial.println("║ [0] Exit Menu                                  ║");
   Serial.println("╚════════════════════════════════════════════════╝");
@@ -668,8 +1129,65 @@ void TerminalManager::displaySendMenu() {
 }
 
 void TerminalManager::displayConfigMenu() {
-  Serial.println("Configuration menu not yet implemented.");
-  Serial.println("Press 0 to return to main menu.");
+  if (ansiEnabled) {
+    Serial.print("\033[2J\033[H");
+  }
+
+  Serial.println("╔════════════════════════════════════════════════╗");
+  Serial.println("║              Configuration                     ║");
+  Serial.println("╠════════════════════════════════════════════════╣");
+  Serial.print("║ Unit Name: ");
+  Serial.print(unitName);
+  for (int i = unitName.length(); i < 36; i++) Serial.print(' ');
+  Serial.println("║");
+  Serial.print("║ Role: ");
+  Serial.print(isServer ? "SERVER" : "CLIENT");
+  for (int i = (isServer ? 6 : 6); i < 41; i++) Serial.print(' ');
+  Serial.println("║");
+  Serial.println("╠════════════════════════════════════════════════╣");
+  Serial.println("║ Use command mode to change settings:           ║");
+  Serial.println("║   name <newname>  - Change unit name           ║");
+  Serial.println("║   passkey <6dig>  - Change passkey             ║");
+  Serial.println("║   mode <mode>     - Change terminal mode       ║");
+  Serial.println("╠════════════════════════════════════════════════╣");
+  Serial.println("║ [0] Back to Main Menu                          ║");
+  Serial.println("╚════════════════════════════════════════════════╝");
+  Serial.print("Enter choice: ");
+}
+
+void TerminalManager::displayMeshMenu() {
+  if (ansiEnabled) {
+    Serial.print("\033[2J\033[H");
+  }
+
+  Serial.println("╔════════════════════════════════════════════════╗");
+  Serial.println("║              Mesh Network                      ║");
+  Serial.println("╠════════════════════════════════════════════════╣");
+
+#if MESH_ENABLED
+  if (meshMgr.isRunning()) {
+    char line[52];
+    snprintf(line, sizeof(line), "║ Status: ACTIVE        Peers: %-3d              ║",
+             meshMgr.getOnlinePeerCount());
+    Serial.println(line);
+    snprintf(line, sizeof(line), "║ TX: %-6lu  RX: %-6lu  Relay: %-6lu         ║",
+             meshMgr.getMessagesSent(), meshMgr.getMessagesReceived(),
+             meshMgr.getMessagesRelayed());
+    Serial.println(line);
+  } else {
+    Serial.println("║ Status: NOT RUNNING                            ║");
+  }
+#else
+  Serial.println("║ Status: DISABLED (compile with MESH_ENABLED)   ║");
+#endif
+
+  Serial.println("╠════════════════════════════════════════════════╣");
+  Serial.println("║ [1] View Mesh Status                           ║");
+  Serial.println("║ [2] View Peers                                 ║");
+  Serial.println("║ [3] View GPS                                   ║");
+  Serial.println("║ [0] Back to Main Menu                          ║");
+  Serial.println("╚════════════════════════════════════════════════╝");
+  Serial.print("Enter choice: ");
 }
 
 void TerminalManager::displayMonitorDashboard() {
