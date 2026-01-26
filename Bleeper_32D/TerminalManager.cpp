@@ -10,6 +10,7 @@ extern String unitName;
 extern uint32_t currentPasskey;
 extern bool isServer;
 extern void simulateButtonPress(int buttonIndex);
+extern void sendCustomMessage(const char* message);
 extern void broadcastEmergency();
 extern void cancelEmergency();
 extern bool emergencyActive;
@@ -156,6 +157,8 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
 
   if (strcmp(verb, "send") == 0) {
     cmdSend(args);
+  } else if (strcmp(verb, "msg") == 0) {
+    cmdMsg(args);
   } else if (strcmp(verb, "emergency") == 0) {
     cmdEmergency();
   } else if (strcmp(verb, "cancel") == 0) {
@@ -248,6 +251,30 @@ void TerminalManager::cmdSend(const char* args) {
 
   Serial.print("Sending: ");
   Serial.println(BUTTON_LABELS[buttonNum - 1]);
+}
+
+void TerminalManager::cmdMsg(const char* args) {
+  if (strlen(args) == 0) {
+    printColored("Error: Message cannot be empty", COLOR_RED);
+    Serial.println();
+    Serial.print("Usage: msg <text> (max ");
+    Serial.print(MAX_CHAT_MSG_LEN);
+    Serial.println(" chars)");
+    return;
+  }
+
+  if (strlen(args) > MAX_CHAT_MSG_LEN) {
+    printColored("Error: Message too long", COLOR_RED);
+    Serial.println();
+    Serial.print("Max length: ");
+    Serial.print(MAX_CHAT_MSG_LEN);
+    Serial.print(" chars (yours: ");
+    Serial.print(strlen(args));
+    Serial.println(")");
+    return;
+  }
+
+  sendCustomMessage(args);
 }
 
 void TerminalManager::cmdEmergency() {
@@ -370,7 +397,10 @@ void TerminalManager::cmdHelp() {
   Serial.println("==================\n");
 
   Serial.println("Message Commands:");
-  Serial.println("  send <1-4>       Send button message (1=ACK, 2=ENROUTE, 3=NEED HELP, 4=ALL GOOD)");
+  Serial.println("  send <1-4>       Send quick message (1=ACK, 2=ENROUTE, 3=NEED HELP, 4=ALL GOOD)");
+  Serial.print("  msg <text>       Send custom message (max ");
+  Serial.print(MAX_CHAT_MSG_LEN);
+  Serial.println(" chars)");
   Serial.println("  emergency        Trigger emergency broadcast");
   Serial.println("  cancel           Cancel emergency\n");
 

@@ -268,6 +268,52 @@ void simulateButtonPress(int buttonIndex) {
   }
 }
 
+void sendCustomMessage(const char* message) {
+  if (message == nullptr || strlen(message) == 0) return;
+
+  lastButtonPressMillis = millis();
+
+  // Build base message: UNIT_NAME:0:CUSTOM_MESSAGE (0 indicates custom msg)
+  char baseMsg[MAX_MESSAGE_SIZE];
+  snprintf(baseMsg, sizeof(baseMsg), "%s:0:%s", unitName.c_str(), message);
+
+  // Generate HMAC
+  uint8_t hmac[HMAC_SIZE];
+  char passkeyStr[16];
+  snprintf(passkeyStr, sizeof(passkeyStr), "%06lu", (unsigned long)currentPasskey);
+
+  if (!MessageAuth::generateHMAC(baseMsg, passkeyStr, hmac, HMAC_SIZE)) {
+    Serial.println("HMAC generation failed");
+    return;
+  }
+
+  char hmacHex[HMAC_HEX_SIZE + 1];
+  MessageAuth::toHex(hmac, HMAC_SIZE, hmacHex, sizeof(hmacHex));
+
+  char authenticatedMsg[MAX_MESSAGE_SIZE];
+  snprintf(authenticatedMsg, sizeof(authenticatedMsg), "%s:%s", baseMsg, hmacHex);
+
+  if (isServer) {
+    extern NimBLECharacteristic* pTxCharacteristic;
+    extern NimBLEServer* pServer;
+    if (pTxCharacteristic && pServer && pServer->getConnectedCount() > 0) {
+      pTxCharacteristic->setValue(std::string(authenticatedMsg));
+      pTxCharacteristic->notify(true);
+    }
+  } else {
+    extern NimBLERemoteCharacteristic* pRemoteRxCharacteristic;
+    if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
+      pRemoteRxCharacteristic->writeValue(std::string(authenticatedMsg), false);
+    }
+  }
+
+  addToHistory(baseMsg);
+  Serial.print("Sent: ");
+  Serial.println(message);
+  oledPrint("Sent:", message);
+  beep();
+}
+
 void setup() {
   Serial.begin(115200);
   delay(100);  // Let serial stabilize

@@ -58,6 +58,7 @@ private:
 
   // Command handlers
   void cmdSend(const char* args);
+  void cmdMsg(const char* args);
   void cmdEmergency();
   void cmdCancel();
   void cmdStatus();

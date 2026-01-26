@@ -23,6 +23,7 @@ extern bool isServer;
 #define PASSKEY_DIGITS 6
 #define HMAC_SIZE 8  // Use first 8 bytes of HMAC-SHA256
 #define HMAC_HEX_SIZE (HMAC_SIZE * 2)  // 16 hex characters
+#define MAX_CHAT_MSG_LEN 48  // Max custom message length (keeps BLE packets small)
 
 // -- CONNECTION PARAMETERS --
 #define SCAN_TIMEOUT_MS 10000
