@@ -1,7 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
-#include <esp_now.h>
+#include "ESP32_NOW.h"
+#include <esp_mac.h>
 #include <WiFi.h>
 #include <vector>
 #include <map>
@@ -93,6 +94,9 @@ struct GPSCoordinates {
 // Callback types for mesh events
 typedef void (*MeshMessageCallback)(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
 typedef void (*MeshPeerCallback)(const MeshPeer* peer, bool isNew);
+
+// Forward declaration for MeshPeer class (defined later in this file)
+class MeshPeer;
 
 class MeshManager {
 public:
