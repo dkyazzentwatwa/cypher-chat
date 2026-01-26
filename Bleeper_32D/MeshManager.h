@@ -106,17 +106,21 @@ public:
   // Constructor for mesh peers
   MeshPeer(const uint8_t *mac_addr, uint8_t channel, wifi_interface_t iface, const uint8_t *lmk)
     : ESP_NOW_Peer(mac_addr, channel, iface, lmk)
-    , _manager(nullptr) {
+    , _manager(nullptr)
+    , _isRegistered(false) {
   }
 
   // Destructor
   virtual ~MeshPeer() {
-    remove();  // Unregister peer from ESP-NOW
+    if (_isRegistered) {  // Only remove if successfully registered
+      remove();
+    }
   }
 
   // Initialize and register peer
   bool begin() {
-    return add();  // Register with ESP-NOW
+    _isRegistered = add();  // Track registration state
+    return _isRegistered;
   }
 
   // Send message to this peer
@@ -138,6 +142,7 @@ protected:
 
 private:
   class MeshManager *_manager;  // Reference to manager for callbacks
+  bool _isRegistered;            // Track if peer was successfully registered
 };
 
 class MeshManager {
