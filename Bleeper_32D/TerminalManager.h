@@ -59,6 +59,12 @@ struct CommandDesc {
   CmdCategory category;       // Category for grouping
 };
 
+// Input source tracking for dual Serial + Bluetooth input
+enum InputSource {
+  INPUT_SOURCE_USB,   // USB Serial input
+  INPUT_SOURCE_BT     // Bluetooth Serial input
+};
+
 class TerminalManager {
 private:
   TerminalMode mode;
@@ -100,6 +106,8 @@ private:
   static const int numCommands;
 
   // Input processing (non-blocking)
+  InputSource _lastInputSource;  // Track last input source for correct echo
+  void processInput(char c, InputSource source);  // Process character from either source
   void processCommand(const char* cmd);
   void parseCommand(const char* cmd, char* verb, char* args);
   void executeCommand(const char* verb, const char* args);

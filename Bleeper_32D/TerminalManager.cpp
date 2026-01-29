@@ -2,6 +2,10 @@
 #include "DisplayManager.h"
 #include "MeshManager.h"
 #include "GPSManager.h"
+#include "OutputManager.h"
+#if BLE_UART_ENABLED
+#include "BLEUARTManager.h"
+#endif
 #include <Preferences.h>
 
 // Global instance
@@ -84,9 +88,9 @@ void TerminalManager::begin() {
   delay(100);
   printBanner();
 
-  Serial.println();
-  Serial.println("Press 'M' for menu, or wait for command mode...");
-  Serial.println("(Use UP/DOWN arrows for history, TAB for completion)");
+  output.println();
+  output.println("Press 'M' for menu, or wait for command mode...");
+  output.println("(Use UP/DOWN arrows for history, TAB for completion)");
 
   // Wait 3 seconds for mode selection
   unsigned long start = millis();
@@ -98,7 +102,7 @@ void TerminalManager::begin() {
         displayMainMenu();
       } else {
         menuState = MENU_NONE;
-        Serial.println("\nCommand mode. Type 'help' for commands.");
+        output.println("\nCommand mode. Type 'help' for commands.");
         printPrompt();
       }
       return;
@@ -107,7 +111,7 @@ void TerminalManager::begin() {
 
   // Default to command mode
   menuState = MENU_NONE;
-  Serial.println("\nCommand mode. Type 'help' for commands.");
+  output.println("\nCommand mode. Type 'help' for commands.");
   printPrompt();
 }
 
@@ -126,7 +130,7 @@ void TerminalManager::toggleMode() {
     displayMainMenu();
   } else {
     menuState = MENU_NONE;
-    Serial.println("Switched to command mode.");
+    output.println("Switched to command mode.");
     printPrompt();
   }
 }
@@ -134,69 +138,133 @@ void TerminalManager::toggleMode() {
 void TerminalManager::poll() {
   if (!enabled) return;
 
+  // Priority: check USB Serial first
   while (Serial.available()) {
     char c = Serial.read();
+    processInput(c, INPUT_SOURCE_USB);
+  }
 
-    if (menuState != MENU_NONE) {
-      // Menu mode - single character input
-      if (c >= '0' && c <= '9') {
-        handleMenuInput(c);
-      }
-    } else {
-      // Handle escape sequences (arrow keys, etc.)
-      if (escapeState > 0) {
-        handleEscapeSequence(c);
-        continue;
-      }
+#if BLE_UART_ENABLED
+  // Then check Bluetooth Serial
+  while (bleUARTMgr.isConnected() && bleUARTMgr.available()) {
+    char c = bleUARTMgr.read();
+    processInput(c, INPUT_SOURCE_BT);
+  }
+#endif
+}
 
-      // Check for escape character start
-      if (c == 0x1B) {  // ESC
-        escapeState = 1;
-        escapePos = 0;
-        continue;
-      }
+void TerminalManager::processInput(char c, InputSource source) {
+  _lastInputSource = source;
 
-      // Tab completion
-      if (c == '\t') {
-        handleTabCompletion();
-        continue;
-      }
+  // Determine which stream to echo to (character echo goes back to source only)
+  // Command output uses OutputManager and broadcasts to all streams
+  bool echoToUSB = (source == INPUT_SOURCE_USB);
+  bool echoToBT = (source == INPUT_SOURCE_BT);
 
-      // Command mode - line-based input
-      if (c == '\n' || c == '\r') {
-        if (inputPos > 0) {
-          inputBuffer[inputPos] = '\0';
-          Serial.println();  // New line after command
-          addToHistory(inputBuffer);
-          processCommand(inputBuffer);
-          inputPos = 0;
-          browsingHistory = false;
-          printPrompt();
-        } else {
-          Serial.println();
-          printPrompt();
+  if (menuState != MENU_NONE) {
+    // Menu mode - single character input
+    if (c >= '0' && c <= '9') {
+      handleMenuInput(c);
+    }
+  } else {
+    // Handle escape sequences (arrow keys, etc.)
+    if (escapeState > 0) {
+      handleEscapeSequence(c);
+      return;
+    }
+
+    // Check for escape character start
+    if (c == 0x1B) {  // ESC
+      escapeState = 1;
+      escapePos = 0;
+      return;
+    }
+
+    // Tab completion
+    if (c == '\t') {
+      handleTabCompletion();
+      return;
+    }
+
+    // Command mode - line-based input
+    if (c == '\n' || c == '\r') {
+      if (inputPos > 0) {
+        inputBuffer[inputPos] = '\0';
+
+        // Echo newline to source stream only
+        if (echoToUSB) Serial.println();
+#if BLE_UART_ENABLED
+        if (echoToBT) {
+          bleUARTMgr.write('\r');
+          bleUARTMgr.write('\n');
         }
-      } else if (c == 0x08 || c == 0x7F) {  // Backspace
-        if (inputPos > 0) {
-          inputPos--;
-          Serial.print("\b \b");  // Erase character
-        }
-      } else if (c == 0x03) {  // Ctrl+C
-        Serial.println("^C");
+#endif
+
+        addToHistory(inputBuffer);
+        processCommand(inputBuffer);
         inputPos = 0;
         browsingHistory = false;
         printPrompt();
-      } else if (c == 0x0C) {  // Ctrl+L (clear screen)
-        cmdClear();
+      } else {
+        // Empty line - just print prompt
+        if (echoToUSB) Serial.println();
+#if BLE_UART_ENABLED
+        if (echoToBT) {
+          bleUARTMgr.write('\r');
+          bleUARTMgr.write('\n');
+        }
+#endif
         printPrompt();
-        // Reprint current input
-        Serial.print(inputBuffer);
-      } else if (inputPos < TERM_MAX_CMD_LEN - 1 && c >= 0x20) {
-        inputBuffer[inputPos++] = c;
-        inputBuffer[inputPos] = '\0';
-        Serial.write(c);  // Echo
-        browsingHistory = false;
       }
+    } else if (c == 0x08 || c == 0x7F) {  // Backspace
+      if (inputPos > 0) {
+        inputPos--;
+
+        // Echo backspace to source stream only
+        if (echoToUSB) Serial.print("\b \b");
+#if BLE_UART_ENABLED
+        if (echoToBT) {
+          bleUARTMgr.write('\b');
+          bleUARTMgr.write(' ');
+          bleUARTMgr.write('\b');
+        }
+#endif
+      }
+    } else if (c == 0x03) {  // Ctrl+C
+      // Echo Ctrl+C indicator to source stream
+      if (echoToUSB) Serial.println("^C");
+#if BLE_UART_ENABLED
+      if (echoToBT) {
+        bleUARTMgr.write('^');
+        bleUARTMgr.write('C');
+        bleUARTMgr.write('\r');
+        bleUARTMgr.write('\n');
+      }
+#endif
+
+      inputPos = 0;
+      browsingHistory = false;
+      printPrompt();
+    } else if (c == 0x0C) {  // Ctrl+L (clear screen)
+      cmdClear();
+      printPrompt();
+
+      // Reprint current input to source stream
+      if (echoToUSB) Serial.print(inputBuffer);
+#if BLE_UART_ENABLED
+      if (echoToBT) bleUARTMgr.write((const uint8_t*)inputBuffer, strlen(inputBuffer));
+#endif
+    } else if (inputPos < TERM_MAX_CMD_LEN - 1 && c >= 0x20) {
+      inputBuffer[inputPos++] = c;
+      inputBuffer[inputPos] = '\0';
+
+      // Echo character to source stream only
+      if (echoToUSB) Serial.write(c);
+#if BLE_UART_ENABLED
+      if (echoToBT) bleUARTMgr.write(c);
+#endif
+
+      browsingHistory = false;
     }
   }
 }
@@ -493,8 +561,8 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
   // Unknown command
   else {
     printColored("Unknown command: ", COLOR_RED);
-    Serial.println(verb);
-    Serial.println("Type 'help' for available commands, or use TAB for completion.");
+    output.println(verb);
+    output.println("Type 'help' for available commands, or use TAB for completion.");
   }
 }
 
@@ -508,15 +576,15 @@ void TerminalManager::handleMenuInput(char input) {
         case '4': menuState = MENU_CONFIG; displayConfigMenu(); break;
         case '5': cmdEmergency(); delay(2000); displayMainMenu(); break;
         case '6': cmdMenu(); break;  // Switch to command mode
-        case '0': menuState = MENU_NONE; Serial.println("Exiting menu mode."); printPrompt(); break;
-        default: Serial.println("Invalid choice."); delay(500); displayMainMenu(); break;
+        case '0': menuState = MENU_NONE; output.println("Exiting menu mode."); printPrompt(); break;
+        default: output.println("Invalid choice."); delay(500); displayMainMenu(); break;
       }
       break;
 
     case MENU_SEND:
       if (input >= '1' && input <= '4') {
         cmdSend(String(input).c_str());
-        Serial.println("Message sent.");
+        output.println("Message sent.");
         delay(1000);
         menuState = MENU_MAIN;
         displayMainMenu();
@@ -532,7 +600,7 @@ void TerminalManager::handleMenuInput(char input) {
         case '2': cmdPeers(); delay(3000); displayMeshMenu(); break;
         case '3': cmdGPS(); delay(2000); displayMeshMenu(); break;
         case '0': menuState = MENU_MAIN; displayMainMenu(); break;
-        default: Serial.println("Invalid choice."); delay(500); displayMeshMenu(); break;
+        default: output.println("Invalid choice."); delay(500); displayMeshMenu(); break;
       }
       break;
 
@@ -541,7 +609,7 @@ void TerminalManager::handleMenuInput(char input) {
         menuState = MENU_MAIN;
         displayMainMenu();
       } else {
-        Serial.println("Configuration menu not yet implemented.");
+        output.println("Configuration menu not yet implemented.");
         delay(1000);
         menuState = MENU_MAIN;
         displayMainMenu();
@@ -558,34 +626,34 @@ void TerminalManager::cmdSend(const char* args) {
   int buttonNum = atoi(args);
   if (buttonNum < 1 || buttonNum > NUM_BUTTONS) {
     printColored("Error: Button number must be 1-4", COLOR_RED);
-    Serial.println();
+    output.println();
     return;
   }
 
   simulateButtonPress(buttonNum - 1);
 
-  Serial.print("Sending: ");
-  Serial.println(BUTTON_LABELS[buttonNum - 1]);
+  output.print("Sending: ");
+  output.println(BUTTON_LABELS[buttonNum - 1]);
 }
 
 void TerminalManager::cmdEmergency() {
   if (!emergencyActive) {
     printColored("[EMERGENCY] Triggering emergency broadcast...", COLOR_RED);
-    Serial.println();
+    output.println();
     broadcastEmergency();
   } else {
     printColored("[EMERGENCY] Emergency already active", COLOR_YELLOW);
-    Serial.println();
+    output.println();
   }
 }
 
 void TerminalManager::cmdCancel() {
   if (emergencyActive) {
     printColored("[EMERGENCY] Canceling emergency broadcast...", COLOR_YELLOW);
-    Serial.println();
+    output.println();
     cancelEmergency();
   } else {
-    Serial.println("No active emergency to cancel.");
+    output.println("No active emergency to cancel.");
   }
 }
 
@@ -603,58 +671,58 @@ void TerminalManager::cmdConfig() {
 
 void TerminalManager::cmdName(const char* newName) {
   if (strlen(newName) == 0) {
-    Serial.println("Error: Unit name cannot be empty");
+    output.println("Error: Unit name cannot be empty");
     return;
   }
 
   unitName = String(newName);
-  Serial.print("Unit name changed to: ");
-  Serial.println(unitName);
-  Serial.println("Note: Restart required for BLE advertising to update.");
+  output.print("Unit name changed to: ");
+  output.println(unitName);
+  output.println("Note: Restart required for BLE advertising to update.");
 }
 
 void TerminalManager::cmdPasskey(const char* newKey) {
   if (strlen(newKey) != PASSKEY_DIGITS) {
-    Serial.print("Error: Passkey must be exactly ");
-    Serial.print(PASSKEY_DIGITS);
-    Serial.println(" digits");
+    output.print("Error: Passkey must be exactly ");
+    output.print(PASSKEY_DIGITS);
+    output.println(" digits");
     return;
   }
 
   uint32_t passkey = atoi(newKey);
   if (passkey < MIN_PASSKEY || passkey > MAX_PASSKEY) {
-    Serial.println("Error: Passkey out of range (100000-999999)");
+    output.println("Error: Passkey out of range (100000-999999)");
     return;
   }
 
   currentPasskey = passkey;
-  Serial.print("Passkey changed to: ");
-  Serial.println(currentPasskey);
-  Serial.println("Note: Restart required to apply new passkey.");
+  output.print("Passkey changed to: ");
+  output.println(currentPasskey);
+  output.println("Note: Restart required to apply new passkey.");
 }
 
 void TerminalManager::cmdMode(const char* modeStr) {
   if (strcmp(modeStr, "quiet") == 0) {
     setMode(TERM_QUIET);
-    Serial.println("Terminal mode: QUIET (errors only)");
+    output.println("Terminal mode: QUIET (errors only)");
   } else if (strcmp(modeStr, "normal") == 0) {
     setMode(TERM_NORMAL);
-    Serial.println("Terminal mode: NORMAL (status + messages)");
+    output.println("Terminal mode: NORMAL (status + messages)");
   } else if (strcmp(modeStr, "verbose") == 0) {
     setMode(TERM_VERBOSE);
-    Serial.println("Terminal mode: VERBOSE (full debug)");
+    output.println("Terminal mode: VERBOSE (full debug)");
   } else if (strcmp(modeStr, "monitor") == 0) {
     setMode(TERM_MONITOR);
-    Serial.println("Terminal mode: MONITOR (live dashboard)");
-    Serial.println("Press any key to exit monitor mode.");
+    output.println("Terminal mode: MONITOR (live dashboard)");
+    output.println("Press any key to exit monitor mode.");
     lastUpdate = 0;  // Force immediate update
   } else {
-    Serial.println("Error: Invalid mode. Use: quiet, normal, verbose, or monitor");
+    output.println("Error: Invalid mode. Use: quiet, normal, verbose, or monitor");
   }
 }
 
 void TerminalManager::cmdRestart() {
-  Serial.println("Restarting ESP32 in 3 seconds...");
+  output.println("Restarting ESP32 in 3 seconds...");
   delay(3000);
   ESP.restart();
 }
@@ -662,8 +730,8 @@ void TerminalManager::cmdRestart() {
 void TerminalManager::cmdUptime() {
   char uptime[32];
   formatUptime(uptime, sizeof(uptime));
-  Serial.print("System uptime: ");
-  Serial.println(uptime);
+  output.print("System uptime: ");
+  output.println(uptime);
 }
 
 void TerminalManager::cmdMemory() {
@@ -671,16 +739,16 @@ void TerminalManager::cmdMemory() {
   uint32_t totalHeap = ESP.getHeapSize();
   uint32_t usedHeap = totalHeap - freeHeap;
 
-  Serial.print("Memory usage: ");
-  Serial.print(usedHeap / 1024);
-  Serial.print("KB / ");
-  Serial.print(totalHeap / 1024);
-  Serial.print("KB (");
-  Serial.print((usedHeap * 100) / totalHeap);
-  Serial.println("%)");
-  Serial.print("Free heap: ");
-  Serial.print(freeHeap / 1024);
-  Serial.println("KB");
+  output.print("Memory usage: ");
+  output.print(usedHeap / 1024);
+  output.print("KB / ");
+  output.print(totalHeap / 1024);
+  output.print("KB (");
+  output.print((usedHeap * 100) / totalHeap);
+  output.println("%)");
+  output.print("Free heap: ");
+  output.print(freeHeap / 1024);
+  output.println("KB");
 }
 
 void TerminalManager::cmdHelp(const char* args) {
@@ -696,146 +764,139 @@ void TerminalManager::cmdHelp(const char* args) {
     }
 
     printColored("Unknown command: ", COLOR_RED);
-    Serial.println(args);
-    Serial.println("Use 'help' without arguments to see all commands.");
+    output.println(args);
+    output.println("Use 'help' without arguments to see all commands.");
     return;
   }
 
   // Show full help organized by category
-  Serial.println();
-  printColored("╔══════════════════════════════════════════════════════════════╗\n", COLOR_CYAN);
-  printColored("║              CYPHER-CHAT TERMINAL COMMANDS                   ║\n", COLOR_CYAN);
-  printColored("╚══════════════════════════════════════════════════════════════╝\n", COLOR_CYAN);
+  output.println("\n================================================");
+  output.println("  CYPHER-CHAT TERMINAL COMMANDS");
+  output.println("================================================\n");
 
-  Serial.println();
-  Serial.println("Shortcuts: UP/DOWN arrows for history, TAB for completion");
-  Serial.println("           Type 'help <command>' for detailed info");
-  Serial.println();
+  output.println("Shortcuts:");
+  output.println("  UP/DOWN - command history");
+  output.println("  TAB - auto-complete");
+  output.println("\nType 'help <command>' for details\n");
 
   printCategoryHelp(CAT_MESSAGE, "Message Commands");
-  printCategoryHelp(CAT_MESH, "Mesh Networking (ESP-NOW, ~250m range)");
+  printCategoryHelp(CAT_MESH, "Mesh Networking");
   printCategoryHelp(CAT_DISPLAY, "Display Commands");
   printCategoryHelp(CAT_CONFIG, "Configuration");
   printCategoryHelp(CAT_SYSTEM, "System Commands");
 }
 
 void TerminalManager::printCategoryHelp(CmdCategory cat, const char* title) {
-  printColored(title, COLOR_YELLOW);
-  Serial.println(":");
+  output.println(title);
+  output.println("----------------");
 
   for (int i = 0; i < numCommands; i++) {
     if (commands[i].category == cat) {
-      Serial.print("  ");
-      printColored(commands[i].name, COLOR_GREEN);
+      // Command name with arguments
+      output.print("  ");
+      output.print(commands[i].name);
 
-      // Pad to 12 chars
-      int padding = 12 - strlen(commands[i].name);
-      for (int j = 0; j < padding; j++) Serial.print(' ');
-
-      // Show arguments if any
       if (commands[i].args) {
-        printColored(commands[i].args, COLOR_CYAN);
-        padding = 10 - strlen(commands[i].args);
-        for (int j = 0; j < padding; j++) Serial.print(' ');
-      } else {
-        Serial.print("          ");  // 10 spaces
+        output.print(" ");
+        output.print(commands[i].args);
       }
 
-      // Show alias
+      // Show alias on same line
       if (commands[i].alias) {
-        Serial.print("[");
-        printColored(commands[i].alias, COLOR_MAGENTA);
-        Serial.print("] ");
-      } else {
-        Serial.print("     ");
+        output.print(" [");
+        output.print(commands[i].alias);
+        output.print("]");
       }
 
-      // Description
-      Serial.println(commands[i].description);
+      output.println();
+
+      // Description on next line, indented
+      output.print("    ");
+      output.println(commands[i].description);
     }
   }
-  Serial.println();
+  output.println();
 }
 
 void TerminalManager::printCommandHelp(const CommandDesc* cmd) {
-  Serial.println();
+  output.println();
   printColored("Command: ", COLOR_CYAN);
   printColored(cmd->name, COLOR_GREEN);
-  Serial.println();
+  output.println();
 
   if (cmd->alias) {
     printColored("Alias:   ", COLOR_CYAN);
     printColored(cmd->alias, COLOR_MAGENTA);
-    Serial.println();
+    output.println();
   }
 
   if (cmd->args) {
     printColored("Usage:   ", COLOR_CYAN);
-    Serial.print(cmd->name);
-    Serial.print(" ");
+    output.print(cmd->name);
+    output.print(" ");
     printColored(cmd->args, COLOR_YELLOW);
-    Serial.println();
+    output.println();
   }
 
   printColored("Info:    ", COLOR_CYAN);
-  Serial.println(cmd->description);
+  output.println(cmd->description);
 
   // Additional usage examples for specific commands
   if (strcmp(cmd->name, "send") == 0) {
-    Serial.println("\nExamples:");
-    Serial.println("  send 1    - Send ACK");
-    Serial.println("  send 2    - Send ENROUTE");
-    Serial.println("  send 3    - Send NEED HELP");
-    Serial.println("  send 4    - Send ALL GOOD");
-    Serial.println("  s 2       - Using alias");
+    output.println("\nExamples:");
+    output.println("  send 1    - Send ACK");
+    output.println("  send 2    - Send ENROUTE");
+    output.println("  send 3    - Send NEED HELP");
+    output.println("  send 4    - Send ALL GOOD");
+    output.println("  s 2       - Using alias");
   } else if (strcmp(cmd->name, "mode") == 0) {
-    Serial.println("\nModes:");
-    Serial.println("  quiet   - Errors only");
-    Serial.println("  normal  - Status + messages (default)");
-    Serial.println("  verbose - Full debug output");
-    Serial.println("  monitor - Live dashboard (1Hz refresh)");
+    output.println("\nModes:");
+    output.println("  quiet   - Errors only");
+    output.println("  normal  - Status + messages (default)");
+    output.println("  verbose - Full debug output");
+    output.println("  monitor - Live dashboard (1Hz refresh)");
   } else if (strcmp(cmd->name, "meshsend") == 0) {
-    Serial.println("\nExamples:");
-    Serial.println("  meshsend Hello everyone");
-    Serial.println("  ms Need assistance at north gate");
+    output.println("\nExamples:");
+    output.println("  meshsend Hello everyone");
+    output.println("  ms Need assistance at north gate");
   }
 
-  Serial.println();
+  output.println();
 }
 
 void TerminalManager::cmdHistory() {
-  Serial.println("\nCommand History:");
-  Serial.println("================");
+  output.println("\nCommand History:");
+  output.println("================");
 
   if (historyCount == 0) {
-    Serial.println("(no commands in history)");
+    output.println("(no commands in history)");
     return;
   }
 
   int start = (historyCount > TERM_HISTORY_SIZE) ? historyCount - TERM_HISTORY_SIZE : 0;
   for (int i = start; i < historyCount; i++) {
     int idx = i % TERM_HISTORY_SIZE;
-    Serial.printf("  %3d: %s\n", i + 1, history[idx]);
+    output.printf("  %3d: %s\n", i + 1, history[idx]);
   }
-  Serial.println();
+  output.println();
 }
 
 void TerminalManager::cmdVersion() {
-  Serial.println();
+  output.println();
   printColored("╔════════════════════════════════════════════════╗\n", COLOR_CYAN);
   printColored("║           CYPHER-CHAT Firmware                 ║\n", COLOR_CYAN);
   printColored("╚════════════════════════════════════════════════╝\n", COLOR_CYAN);
 
-  Serial.print("Version:    ");
+  output.print("Version:    ");
   printColored("2.0.0-mesh\n", COLOR_GREEN);
 
-  Serial.print("Build:      ");
-  Serial.println(__DATE__ " " __TIME__);
+  output.print("Build:      ");
+  output.println(__DATE__ " " __TIME__);
 
-  Serial.print("Platform:   ");
-  Serial.println("ESP32");
+  output.print("Platform:   ");
+  output.println("ESP32");
 
-  Serial.print("Features:   ");
+  output.print("Features:   ");
 #if MESH_ENABLED
   printColored("MESH ", COLOR_GREEN);
 #else
@@ -849,14 +910,14 @@ void TerminalManager::cmdVersion() {
   printColored("BLE ", COLOR_GREEN);
   printColored("HMAC-SHA256\n", COLOR_GREEN);
 
-  Serial.println();
+  output.println();
 }
 
 void TerminalManager::cmdAnsi(const char* args) {
   if (args == nullptr || strlen(args) == 0) {
-    Serial.print("ANSI colors: ");
-    Serial.println(ansiEnabled ? "enabled" : "disabled");
-    Serial.println("Usage: ansi <on|off>");
+    output.print("ANSI colors: ");
+    output.println(ansiEnabled ? "enabled" : "disabled");
+    output.println("Usage: ansi <on|off>");
     return;
   }
 
@@ -867,17 +928,17 @@ void TerminalManager::cmdAnsi(const char* args) {
   } else if (strcmp(args, "off") == 0 || strcmp(args, "0") == 0) {
     ansiEnabled = false;
     saveConfig();
-    Serial.println("ANSI colors disabled");
+    output.println("ANSI colors disabled");
   } else {
-    Serial.println("Usage: ansi <on|off>");
+    output.println("Usage: ansi <on|off>");
   }
 }
 
 void TerminalManager::cmdClear() {
   if (ansiEnabled) {
-    Serial.print("\033[2J\033[H");  // Clear screen and move to home
+    output.print("\033[2J\033[H");  // Clear screen and move to home
   } else {
-    for (int i = 0; i < 50; i++) Serial.println();  // Fallback
+    for (int i = 0; i < 50; i++) output.println();  // Fallback
   }
 }
 
@@ -888,13 +949,13 @@ void TerminalManager::cmdMenu() {
 // Mesh networking commands
 void TerminalManager::cmdMesh() {
 #if MESH_ENABLED
-  Serial.println("\n╔════════════════════════════════════════════════╗");
-  Serial.println("║           Mesh Network Status                  ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
+  output.println("\n================================================");
+  output.println("  Mesh Network Status");
+  output.println("================================================");
 
   if (!meshMgr.isRunning()) {
-    Serial.println("║ Mesh networking: DISABLED                      ║");
-    Serial.println("╚════════════════════════════════════════════════╝\n");
+    output.println("Mesh networking: DISABLED");
+    output.println("================================================\n");
     return;
   }
 
@@ -905,101 +966,101 @@ void TerminalManager::cmdMesh() {
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-  char line[52];
-  snprintf(line, sizeof(line), "║ My MAC: %-17s              ║", macStr);
-  Serial.println(line);
+  output.print("My MAC: ");
+  output.println(macStr);
 
-  snprintf(line, sizeof(line), "║ Status: %-10s    Peers Online: %-3d    ║",
-           meshMgr.isRunning() ? "RUNNING" : "STOPPED",
-           meshMgr.getOnlinePeerCount());
-  Serial.println(line);
+  output.print("Status: ");
+  output.print(meshMgr.isRunning() ? "RUNNING" : "STOPPED");
+  output.print("  Peers Online: ");
+  output.println(meshMgr.getOnlinePeerCount());
 
-  Serial.println("╠════════════════════════════════════════════════╣");
+  output.println("------------------------------------------------");
 
-  snprintf(line, sizeof(line), "║ Messages Sent:     %-8lu                  ║",
-           meshMgr.getMessagesSent());
-  Serial.println(line);
+  output.print("Messages Sent: ");
+  output.println(meshMgr.getMessagesSent());
 
-  snprintf(line, sizeof(line), "║ Messages Received: %-8lu                  ║",
-           meshMgr.getMessagesReceived());
-  Serial.println(line);
+  output.print("Messages Received: ");
+  output.println(meshMgr.getMessagesReceived());
 
-  snprintf(line, sizeof(line), "║ Messages Relayed:  %-8lu                  ║",
-           meshMgr.getMessagesRelayed());
-  Serial.println(line);
+  output.print("Messages Relayed: ");
+  output.println(meshMgr.getMessagesRelayed());
 
-  snprintf(line, sizeof(line), "║ Messages Dropped:  %-8lu                  ║",
-           meshMgr.getMessagesDropped());
-  Serial.println(line);
+  output.print("Messages Dropped: ");
+  output.println(meshMgr.getMessagesDropped());
 
-  snprintf(line, sizeof(line), "║ Store Queue:       %-3d / %-3d messages        ║",
-           meshMgr.getStoredMessageCount(), MESH_STORE_QUEUE_SIZE);
-  Serial.println(line);
+  output.print("Store Queue: ");
+  output.print(meshMgr.getStoredMessageCount());
+  output.print(" / ");
+  output.print(MESH_STORE_QUEUE_SIZE);
+  output.println(" messages");
 
-  Serial.println("╚════════════════════════════════════════════════╝\n");
+  output.println("================================================\n");
 #else
-  Serial.println("Mesh networking is disabled (MESH_ENABLED=false)");
+  output.println("Mesh networking is disabled (MESH_ENABLED=false)");
 #endif
 }
 
 void TerminalManager::cmdPeers() {
 #if MESH_ENABLED
   if (!meshMgr.isRunning()) {
-    Serial.println("Mesh networking not running.");
+    output.println("Mesh networking not running.");
     return;
   }
 
   std::vector<MeshPeerInfo> peers = meshMgr.getPeers();
 
-  Serial.println("\n╔════════════════════════════════════════════════════════════╗");
-  Serial.println("║                    Mesh Peers                               ║");
-  Serial.println("╠════════════════════════════════════════════════════════════╣");
+  output.println("\n================================================");
+  output.println("  Mesh Peers");
+  output.println("================================================");
 
   if (peers.empty()) {
-    Serial.println("║ No peers discovered yet.                                    ║");
-    Serial.println("║ Peers are discovered via heartbeat (every 15 seconds).      ║");
+    output.println("No peers discovered yet.");
+    output.println("Peers are discovered via heartbeat (every 15s).");
   } else {
-    Serial.println("║ MAC Address       | Name       | RSSI | Hops | Status      ║");
-    Serial.println("╠════════════════════════════════════════════════════════════╣");
-
     for (const auto& peer : peers) {
       char macStr[18];
       snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
                peer.mac[0], peer.mac[1], peer.mac[2],
                peer.mac[3], peer.mac[4], peer.mac[5]);
 
-      char line[72];
-      snprintf(line, sizeof(line), "║ %-17s | %-10s | %-4d | %-4d | %-10s ║",
-               macStr,
-               strlen(peer.unitName) > 0 ? peer.unitName : "-",
-               peer.rssi,
-               peer.hopDistance,
-               peer.isOnline ? "ONLINE" : "OFFLINE");
-      Serial.println(line);
+      output.println();
+      output.print("MAC: ");
+      output.println(macStr);
+
+      if (strlen(peer.unitName) > 0) {
+        output.print("Name: ");
+        output.println(peer.unitName);
+      }
+
+      output.print("Signal: ");
+      output.print(peer.rssi);
+      output.print(" dBm  Hops: ");
+      output.print(peer.hopDistance);
+      output.print("  Status: ");
+      output.println(peer.isOnline ? "ONLINE" : "OFFLINE");
     }
   }
 
-  Serial.println("╚════════════════════════════════════════════════════════════╝\n");
-
-  Serial.print("Total peers: ");
-  Serial.print(peers.size());
-  Serial.print(" (");
-  Serial.print(meshMgr.getOnlinePeerCount());
-  Serial.println(" online)\n");
+  output.println("\n================================================");
+  output.print("Total: ");
+  output.print(peers.size());
+  output.print(" peers (");
+  output.print(meshMgr.getOnlinePeerCount());
+  output.println(" online)\n");
 #else
-  Serial.println("Mesh networking is disabled (MESH_ENABLED=false)");
+  output.println("Mesh networking is disabled (MESH_ENABLED=false)");
 #endif
 }
 
 void TerminalManager::cmdMeshSend(const char* args) {
 #if MESH_ENABLED
   if (!meshMgr.isRunning()) {
-    Serial.println("Mesh networking not running.");
+    output.println("Mesh networking not running.");
     return;
   }
 
   if (strlen(args) == 0) {
-    Serial.println("Usage: meshsend <message>");
+    output.println("Usage: meshsend <message>");
     return;
   }
 
@@ -1011,15 +1072,15 @@ void TerminalManager::cmdMeshSend(const char* args) {
 
   if (msgId > 0) {
     printColored("[MESH TX] ", COLOR_CYAN);
-    Serial.printf("Broadcast sent (id: %08X, TTL: %d)\n", msgId, MESH_DEFAULT_TTL);
-    Serial.print("  Message: ");
-    Serial.println(msg);
+    output.printf("Broadcast sent (id: %08X, TTL: %d)\n", msgId, MESH_DEFAULT_TTL);
+    output.print("  Message: ");
+    output.println(msg);
   } else {
     printColored("[MESH] ", COLOR_RED);
-    Serial.println("Failed to send broadcast");
+    output.println("Failed to send broadcast");
   }
 #else
-  Serial.println("Mesh networking is disabled (MESH_ENABLED=false)");
+  output.println("Mesh networking is disabled (MESH_ENABLED=false)");
 #endif
 }
 
@@ -1031,9 +1092,9 @@ void TerminalManager::cmdMeshBroadcast(const char* args) {
 // GPS commands
 void TerminalManager::cmdGPS() {
 #if GPS_ENABLED
-  Serial.println("\n╔════════════════════════════════════════════════╗");
-  Serial.println("║              GPS Status                        ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
+  output.println("\n╔════════════════════════════════════════════════╗");
+  output.println("║              GPS Status                        ║");
+  output.println("╠════════════════════════════════════════════════╣");
 
   GPSStatus status = gpsMgr.getStatus();
   const char* statusStr;
@@ -1048,156 +1109,156 @@ void TerminalManager::cmdGPS() {
   char line[52];
   snprintf(line, sizeof(line), "║ Status: %-10s  Satellites: %-3d          ║",
            statusStr, gpsMgr.getSatellites());
-  Serial.println(line);
+  output.println(line);
 
   if (gpsMgr.hasFix()) {
     GPSCoordinates coords = gpsMgr.getCoordinates();
 
     snprintf(line, sizeof(line), "║ Latitude:  %11.6f                      ║", coords.latitude);
-    Serial.println(line);
+    output.println(line);
 
     snprintf(line, sizeof(line), "║ Longitude: %11.6f                      ║", coords.longitude);
-    Serial.println(line);
+    output.println(line);
 
     snprintf(line, sizeof(line), "║ Altitude:  %7.1f m                        ║", coords.altitude);
-    Serial.println(line);
+    output.println(line);
 
     snprintf(line, sizeof(line), "║ HDOP: %.1f   Speed: %.1f km/h               ║",
              gpsMgr.getHDOP(), gpsMgr.getSpeed());
-    Serial.println(line);
+    output.println(line);
 
     unsigned long age = gpsMgr.getFixAge();
     snprintf(line, sizeof(line), "║ Fix Age: %lu ms                            ║", age);
-    Serial.println(line);
+    output.println(line);
 
-    Serial.println("╠════════════════════════════════════════════════╣");
+    output.println("╠════════════════════════════════════════════════╣");
 
     char mapsUrl[80];
     gpsMgr.formatMapsURL(mapsUrl, sizeof(mapsUrl));
-    Serial.print("║ ");
-    Serial.println(mapsUrl);
+    output.print("║ ");
+    output.println(mapsUrl);
   } else {
-    Serial.println("║ Waiting for satellite fix...                   ║");
-    Serial.println("║ Ensure GPS module has clear sky view.          ║");
+    output.println("║ Waiting for satellite fix...                   ║");
+    output.println("║ Ensure GPS module has clear sky view.          ║");
   }
 
-  Serial.println("╚════════════════════════════════════════════════╝\n");
+  output.println("╚════════════════════════════════════════════════╝\n");
 #else
-  Serial.println("GPS is disabled (GPS_ENABLED=false in Config.h)");
-  Serial.println("To enable:");
-  Serial.println("  1. Set GPS_ENABLED to true in Config.h");
-  Serial.printf("  2. Connect GPS TX to GPIO %d (GPS_RX_PIN)\n", GPS_RX_PIN);
-  Serial.println("  3. Recompile and upload firmware");
+  output.println("GPS is disabled (GPS_ENABLED=false in Config.h)");
+  output.println("To enable:");
+  output.println("  1. Set GPS_ENABLED to true in Config.h");
+  output.printf("  2. Connect GPS TX to GPIO %d (GPS_RX_PIN)\n", GPS_RX_PIN);
+  output.println("  3. Recompile and upload firmware");
 #endif
 }
 
 // Display functions
 void TerminalManager::displayMainMenu() {
   if (ansiEnabled) {
-    Serial.print("\033[2J\033[H");  // Clear screen
+    output.print("\033[2J\033[H");  // Clear screen
   }
 
-  Serial.println("╔════════════════════════════════════════════════╗");
-  Serial.println("║          CYPHER-CHAT Control Menu              ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
-  Serial.println("║ [1] Send Message                               ║");
-  Serial.println("║ [2] View Status                                ║");
-  Serial.println("║ [3] Mesh Network                               ║");
-  Serial.println("║ [4] Configuration                              ║");
-  Serial.println("║ [5] EMERGENCY Broadcast                        ║");
-  Serial.println("║ [6] Switch to Command Mode                     ║");
-  Serial.println("║ [0] Exit Menu                                  ║");
-  Serial.println("╚════════════════════════════════════════════════╝");
-  Serial.print("Enter choice: ");
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║          CYPHER-CHAT Control Menu              ║");
+  output.println("╠════════════════════════════════════════════════╣");
+  output.println("║ [1] Send Message                               ║");
+  output.println("║ [2] View Status                                ║");
+  output.println("║ [3] Mesh Network                               ║");
+  output.println("║ [4] Configuration                              ║");
+  output.println("║ [5] EMERGENCY Broadcast                        ║");
+  output.println("║ [6] Switch to Command Mode                     ║");
+  output.println("║ [0] Exit Menu                                  ║");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.print("Enter choice: ");
 }
 
 void TerminalManager::displaySendMenu() {
   if (ansiEnabled) {
-    Serial.print("\033[2J\033[H");
+    output.print("\033[2J\033[H");
   }
 
-  Serial.println("╔════════════════════════════════════════════════╗");
-  Serial.println("║              Send Message                      ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
-  Serial.println("║ [1] ACK                                        ║");
-  Serial.println("║ [2] ENROUTE                                    ║");
-  Serial.println("║ [3] NEED HELP                                  ║");
-  Serial.println("║ [4] ALL GOOD                                   ║");
-  Serial.println("║ [0] Back to Main Menu                          ║");
-  Serial.println("╚════════════════════════════════════════════════╝");
-  Serial.print("Enter choice: ");
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║              Send Message                      ║");
+  output.println("╠════════════════════════════════════════════════╣");
+  output.println("║ [1] ACK                                        ║");
+  output.println("║ [2] ENROUTE                                    ║");
+  output.println("║ [3] NEED HELP                                  ║");
+  output.println("║ [4] ALL GOOD                                   ║");
+  output.println("║ [0] Back to Main Menu                          ║");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.print("Enter choice: ");
 }
 
 void TerminalManager::displayConfigMenu() {
   if (ansiEnabled) {
-    Serial.print("\033[2J\033[H");
+    output.print("\033[2J\033[H");
   }
 
-  Serial.println("╔════════════════════════════════════════════════╗");
-  Serial.println("║              Configuration                     ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
-  Serial.print("║ Unit Name: ");
-  Serial.print(unitName);
-  for (int i = unitName.length(); i < 36; i++) Serial.print(' ');
-  Serial.println("║");
-  Serial.print("║ Role: ");
-  Serial.print(isServer ? "SERVER" : "CLIENT");
-  for (int i = (isServer ? 6 : 6); i < 41; i++) Serial.print(' ');
-  Serial.println("║");
-  Serial.println("╠════════════════════════════════════════════════╣");
-  Serial.println("║ Use command mode to change settings:           ║");
-  Serial.println("║   name <newname>  - Change unit name           ║");
-  Serial.println("║   passkey <6dig>  - Change passkey             ║");
-  Serial.println("║   mode <mode>     - Change terminal mode       ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
-  Serial.println("║ [0] Back to Main Menu                          ║");
-  Serial.println("╚════════════════════════════════════════════════╝");
-  Serial.print("Enter choice: ");
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║              Configuration                     ║");
+  output.println("╠════════════════════════════════════════════════╣");
+  output.print("║ Unit Name: ");
+  output.print(unitName);
+  for (int i = unitName.length(); i < 36; i++) output.print(' ');
+  output.println("║");
+  output.print("║ Role: ");
+  output.print(isServer ? "SERVER" : "CLIENT");
+  for (int i = (isServer ? 6 : 6); i < 41; i++) output.print(' ');
+  output.println("║");
+  output.println("╠════════════════════════════════════════════════╣");
+  output.println("║ Use command mode to change settings:           ║");
+  output.println("║   name <newname>  - Change unit name           ║");
+  output.println("║   passkey <6dig>  - Change passkey             ║");
+  output.println("║   mode <mode>     - Change terminal mode       ║");
+  output.println("╠════════════════════════════════════════════════╣");
+  output.println("║ [0] Back to Main Menu                          ║");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.print("Enter choice: ");
 }
 
 void TerminalManager::displayMeshMenu() {
   if (ansiEnabled) {
-    Serial.print("\033[2J\033[H");
+    output.print("\033[2J\033[H");
   }
 
-  Serial.println("╔════════════════════════════════════════════════╗");
-  Serial.println("║              Mesh Network                      ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║              Mesh Network                      ║");
+  output.println("╠════════════════════════════════════════════════╣");
 
 #if MESH_ENABLED
   if (meshMgr.isRunning()) {
     char line[52];
     snprintf(line, sizeof(line), "║ Status: ACTIVE        Peers: %-3d              ║",
              meshMgr.getOnlinePeerCount());
-    Serial.println(line);
+    output.println(line);
     snprintf(line, sizeof(line), "║ TX: %-6lu  RX: %-6lu  Relay: %-6lu         ║",
              meshMgr.getMessagesSent(), meshMgr.getMessagesReceived(),
              meshMgr.getMessagesRelayed());
-    Serial.println(line);
+    output.println(line);
   } else {
-    Serial.println("║ Status: NOT RUNNING                            ║");
+    output.println("║ Status: NOT RUNNING                            ║");
   }
 #else
-  Serial.println("║ Status: DISABLED (compile with MESH_ENABLED)   ║");
+  output.println("║ Status: DISABLED (compile with MESH_ENABLED)   ║");
 #endif
 
-  Serial.println("╠════════════════════════════════════════════════╣");
-  Serial.println("║ [1] View Mesh Status                           ║");
-  Serial.println("║ [2] View Peers                                 ║");
-  Serial.println("║ [3] View GPS                                   ║");
-  Serial.println("║ [0] Back to Main Menu                          ║");
-  Serial.println("╚════════════════════════════════════════════════╝");
-  Serial.print("Enter choice: ");
+  output.println("╠════════════════════════════════════════════════╣");
+  output.println("║ [1] View Mesh Status                           ║");
+  output.println("║ [2] View Peers                                 ║");
+  output.println("║ [3] View GPS                                   ║");
+  output.println("║ [0] Back to Main Menu                          ║");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.print("Enter choice: ");
 }
 
 void TerminalManager::displayMonitorDashboard() {
   if (ansiEnabled) {
-    Serial.print("\033[2J\033[H");  // Clear and home
+    output.print("\033[2J\033[H");  // Clear and home
   }
 
-  Serial.println("╔════════════════════════════════════════════════╗");
-  Serial.println("║ Bleeper_32D - LIVE MONITOR                    ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║ Bleeper_32D - LIVE MONITOR                    ║");
+  output.println("╠════════════════════════════════════════════════╣");
 
   // Status line
   char line[64];
@@ -1210,66 +1271,66 @@ void TerminalManager::displayMonitorDashboard() {
 
   snprintf(line, sizeof(line), "║ State: %-12s      Uptime: %8s   ║",
            stateStr, uptime);
-  Serial.println(line);
+  output.println(line);
 
   // Retry and memory
   int retries = connectionState.getRetryCount();
   uint32_t freeHeap = ESP.getFreeHeap();
   snprintf(line, sizeof(line), "║ Retry: %-3d                Memory: %3luKB free ║",
            retries, freeHeap / 1024);
-  Serial.println(line);
+  output.println(line);
 
   // Role and unit
   const char* role = isServer ? "SERVER" : "CLIENT";
   snprintf(line, sizeof(line), "║ Role: %-10s          Unit: %-11s ║",
            role, unitName.c_str());
-  Serial.println(line);
+  output.println(line);
 
-  Serial.println("╠════════════════════════════════════════════════╣");
-  Serial.println("║ Recent Activity:                               ║");
+  output.println("╠════════════════════════════════════════════════╣");
+  output.println("║ Recent Activity:                               ║");
 
   // This would show recent messages/events
   // For now, placeholder
-  Serial.println("║ (Activity log not yet implemented)            ║");
+  output.println("║ (Activity log not yet implemented)            ║");
 
-  Serial.println("╚════════════════════════════════════════════════╝");
-  Serial.println("Press any key to exit monitor mode...");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.println("Press any key to exit monitor mode...");
 }
 
 void TerminalManager::printColored(const char* text, const char* color) {
   if (ansiEnabled && color) {
-    Serial.print(color);
-    Serial.print(text);
-    Serial.print(COLOR_RESET);
+    output.print(color);
+    output.print(text);
+    output.print(COLOR_RESET);
   } else {
-    Serial.print(text);
+    output.print(text);
   }
 }
 
 void TerminalManager::printBanner() {
   if (!TERMINAL_BANNER_ENABLED) return;
 
-  Serial.println();
-  Serial.println("╔════════════════════════════════════════════════╗");
-  Serial.println("║     Bleeper_32D Emergency Communication        ║");
-  Serial.println("╚════════════════════════════════════════════════╝");
+  output.println();
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║     Bleeper_32D Emergency Communication        ║");
+  output.println("╚════════════════════════════════════════════════╝");
 }
 
 void TerminalManager::printPrompt() {
-  Serial.print("> ");
+  output.print("> ");
 }
 
 void TerminalManager::printStatus() {
-  Serial.println("\n╔════════════════════════════════════════════════╗");
-  Serial.println("║ Bleeper_32D - Emergency Communication Device   ║");
-  Serial.println("╠════════════════════════════════════════════════╣");
+  output.println("\n================================================");
+  output.println("  Bleeper_32D - Emergency Communication Device");
+  output.println("================================================");
 
   // Role and unit
-  char line[64];
   const char* role = isServer ? "SERVER" : "CLIENT";
-  snprintf(line, sizeof(line), "║ Role: %-10s          Unit: %-11s ║",
-           role, unitName.c_str());
-  Serial.println(line);
+  output.print("Role: ");
+  output.print(role);
+  output.print("  Unit: ");
+  output.println(unitName);
 
   // State and retry
   extern StateManager connectionState;
@@ -1277,66 +1338,67 @@ void TerminalManager::printStatus() {
   const char* stateStr = getStateString(state);
   int retries = connectionState.getRetryCount();
 
-  snprintf(line, sizeof(line), "║ BLE State: %-10s          Retry: %-3d    ║",
-           stateStr, retries);
-  Serial.println(line);
+  output.print("BLE State: ");
+  output.print(stateStr);
+  output.print("  Retry: ");
+  output.println(retries);
 
   // Uptime
   char uptime[16];
   formatUptime(uptime, sizeof(uptime));
-  snprintf(line, sizeof(line), "║ Uptime: %-37s ║", uptime);
-  Serial.println(line);
+  output.print("Uptime: ");
+  output.println(uptime);
 
-  Serial.println("╠════════════════════════════════════════════════╣");
+  output.println("------------------------------------------------");
 
 #if MESH_ENABLED
   // Mesh status
   if (meshMgr.isRunning()) {
-    snprintf(line, sizeof(line), "║ Mesh: ACTIVE        Peers Online: %-3d        ║",
-             meshMgr.getOnlinePeerCount());
-    Serial.println(line);
+    output.print("Mesh: ACTIVE  Peers Online: ");
+    output.println(meshMgr.getOnlinePeerCount());
 
-    snprintf(line, sizeof(line), "║ Mesh TX: %-6lu   RX: %-6lu   Relay: %-6lu ║",
-             meshMgr.getMessagesSent(),
-             meshMgr.getMessagesReceived(),
-             meshMgr.getMessagesRelayed());
-    Serial.println(line);
+    output.print("Mesh TX: ");
+    output.print(meshMgr.getMessagesSent());
+    output.print("  RX: ");
+    output.print(meshMgr.getMessagesReceived());
+    output.print("  Relay: ");
+    output.println(meshMgr.getMessagesRelayed());
   } else {
-    Serial.println("║ Mesh: DISABLED                                 ║");
+    output.println("Mesh: DISABLED");
   }
 #else
-  Serial.println("║ Mesh: NOT COMPILED                             ║");
+  output.println("Mesh: NOT COMPILED");
 #endif
 
-  Serial.println("╚════════════════════════════════════════════════╝\n");
+  output.println("================================================\n");
 }
 
 void TerminalManager::printMessageHistory() {
-  Serial.println("\nMessage History:");
-  Serial.println("================");
+  output.println("\nMessage History:");
+  output.println("================");
   // This would show message history from DisplayManager
   // For now, placeholder
-  Serial.println("(Message history integration pending)\n");
+  output.println("(Message history integration pending)\n");
 }
 
 void TerminalManager::printConfiguration() {
-  Serial.println("\nDevice Configuration:");
-  Serial.println("====================");
-  Serial.print("Unit Name: ");
-  Serial.println(unitName);
-  Serial.print("Role: ");
-  Serial.println(isServer ? "SERVER" : "CLIENT");
-  Serial.print("Passkey: ");
-  Serial.print(currentPasskey);
-  Serial.println(" (configured)");
-  Serial.print("Terminal Mode: ");
+  output.println("\nDevice Configuration:");
+  output.println("====================");
+  output.print("Unit Name: ");
+  output.println(unitName);
+  output.print("Role: ");
+  output.println(isServer ? "SERVER" : "CLIENT");
+  output.print("Passkey: ");
+  output.print(currentPasskey);
+  output.println(" (configured)");
+  output.print("Terminal Mode: ");
   switch (mode) {
-    case TERM_QUIET: Serial.println("QUIET"); break;
-    case TERM_NORMAL: Serial.println("NORMAL"); break;
-    case TERM_VERBOSE: Serial.println("VERBOSE"); break;
-    case TERM_MONITOR: Serial.println("MONITOR"); break;
+    case TERM_QUIET: output.println("QUIET"); break;
+    case TERM_NORMAL: output.println("NORMAL"); break;
+    case TERM_VERBOSE: output.println("VERBOSE"); break;
+    case TERM_MONITOR: output.println("MONITOR"); break;
   }
-  Serial.println();
+  output.println();
 }
 
 // Event logging
@@ -1345,7 +1407,7 @@ void TerminalManager::logEvent(const char* level, const char* message) {
   if (mode == TERM_QUIET && strcmp(level, "ERROR") != 0) return;
   if (mode == TERM_MONITOR) return;  // Don't log in monitor mode
 
-  Serial.print("[");
+  output.print("[");
 
   if (strcmp(level, "ERROR") == 0) {
     printColored(level, COLOR_RED);
@@ -1354,11 +1416,11 @@ void TerminalManager::logEvent(const char* level, const char* message) {
   } else if (strcmp(level, "SCAN") == 0 || strcmp(level, "CONN") == 0) {
     printColored(level, COLOR_CYAN);
   } else {
-    Serial.print(level);
+    output.print(level);
   }
 
-  Serial.print("] ");
-  Serial.println(message);
+  output.print("] ");
+  output.println(message);
 }
 
 void TerminalManager::logConnection(ConnectionState state) {
@@ -1392,7 +1454,7 @@ void TerminalManager::logMessage(const char* msg, bool isOutgoing, bool delivere
   snprintf(formatted, sizeof(formatted), "[%s] %s %s %s",
            timestamp, direction, msg, status);
 
-  Serial.println(formatted);
+  output.println(formatted);
 }
 
 void TerminalManager::logHMAC(bool verified, const char* message) {
@@ -1401,10 +1463,10 @@ void TerminalManager::logHMAC(bool verified, const char* message) {
 
   if (verified) {
     printColored("[HMAC] ✓ Signature verified: ", COLOR_GREEN);
-    Serial.println(message);
+    output.println(message);
   } else {
     printColored("[HMAC] ✗ Verification FAILED: ", COLOR_RED);
-    Serial.println(message);
+    output.println(message);
   }
 }
 
@@ -1416,7 +1478,7 @@ void TerminalManager::logEmergency(bool active) {
   } else {
     printColored("[EMERGENCY] Emergency canceled", COLOR_YELLOW);
   }
-  Serial.println();
+  output.println();
 }
 
 void TerminalManager::logButtonPress(int buttonIndex, ButtonEvent event) {

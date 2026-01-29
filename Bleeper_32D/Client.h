@@ -3,3 +3,4 @@
 
 void setupClient();
 void clientLoop();
+bool isConnected();

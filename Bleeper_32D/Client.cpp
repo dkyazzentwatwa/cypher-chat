@@ -1,4 +1,6 @@
 #include "Client.h"
+
+#if BLE_ENABLED
 #include "MessageAuth.h"
 #include "StateManager.h"
 #include "DisplayManager.h"
@@ -36,6 +38,10 @@ static void freeServerDevice() {
         delete pServerDevice;
         pServerDevice = nullptr;
     }
+}
+
+bool isConnected() {
+    return connectionState.getState() == STATE_CONNECTED;
 }
 
 void notifyCallback(NimBLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
@@ -393,17 +399,25 @@ void setupClient() {
 }
 
 void handleClientButtons() {
-    if (connectionState.getState() != STATE_CONNECTED || millis() - lastButtonPressMillis < DEBOUNCE_DELAY) {
+    if (millis() - lastButtonPressMillis < DEBOUNCE_DELAY) {
         return;
     }
     for (int i = 0; i < NUM_BUTTONS; i++) {
         if (digitalRead(BUTTON_PINS[i]) == LOW) {
             lastButtonPressMillis = millis();
-            if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
-                // Create base message
-                char baseMsg[64];
-                snprintf(baseMsg, sizeof(baseMsg), "%s:%d:%s", unitName.c_str(), i + 1, BUTTON_LABELS[i]);
+            
+            // Create base message
+            char baseMsg[64];
+            snprintf(baseMsg, sizeof(baseMsg), "%s:%d:%s", unitName.c_str(), i + 1, BUTTON_LABELS[i]);
 
+            // Always show on local display
+            char sentMsg[32];
+            snprintf(sentMsg, sizeof(sentMsg), "Sent: %s", baseMsg);
+            oledPrint(sentMsg, isConnected() ? "Connected to Server" : "Offline (Queued)");
+            addToHistory(baseMsg);
+            beep();
+
+            if (isConnected() && pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
                 // Generate HMAC
                 uint8_t hmac[HMAC_SIZE];
                 char passkeyStr[16];
@@ -419,11 +433,6 @@ void handleClientButtons() {
 
                     // Send authenticated message
                     pRemoteRxCharacteristic->writeValue(std::string(authenticatedMsg), false);
-                    addToHistory(baseMsg);  // Store base message in history
-
-                    char sentMsg[32];
-                    snprintf(sentMsg, sizeof(sentMsg), "Sent: %s", baseMsg);
-                    oledPrint(sentMsg, "Connected to Server");
                     lastSentMsg = String(baseMsg);
 
                     // Store for potential retry
@@ -435,11 +444,9 @@ void handleClientButtons() {
 
                     // Trigger TX indicators
                     ledMgr.flash(LED_MESSAGE_TX, 200);
-                    buzzerMgr.play(BUZZ_BUTTON);
-                } else {
-                    oledPrint("HMAC failed", "Cannot send");
-                    buzzerMgr.play(BUZZ_ERROR);
                 }
+            } else {
+                Serial.println("Button pressed but not connected - message not transmitted");
             }
             break;
         }
@@ -588,3 +595,11 @@ void clientLoop() {
 
     yield();
 }
+#else
+void setupClient() {
+  Serial.println("BLE disabled (BLE_ENABLED=false)");
+}
+
+void clientLoop() {
+}
+#endif

@@ -1,4 +1,6 @@
 #include "Server.h"
+
+#if BLE_ENABLED
 #include "MessageAuth.h"
 
 NimBLEServer* pServer = nullptr;
@@ -199,3 +201,11 @@ void loopServer() {
         }
     }
 }
+#else
+void setupServer() {
+  Serial.println("BLE disabled (BLE_ENABLED=false)");
+}
+
+void loopServer() {
+}
+#endif

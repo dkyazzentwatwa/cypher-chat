@@ -146,6 +146,8 @@ private:
 };
 
 class MeshManager {
+  friend class MeshPeer;
+  friend void onNewPeerPacket(const esp_now_recv_info_t*, const uint8_t*, int, void*);
 public:
   MeshManager();
 
@@ -267,10 +269,6 @@ public:
   int getStoredMessageCount() const;
 
 private:
-  // ESP-NOW callbacks (static for C callback)
-  static void onDataSent(const uint8_t* mac, esp_now_send_status_t status);
-  static void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len);
-
   // Internal message handling
   void processPacket(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
   void handleDataMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
@@ -304,6 +302,11 @@ private:
   uint32_t generateMessageId();
   bool addEspNowPeer(const uint8_t* mac);
 
+  // Peer management for new API
+  MeshPeer* findOrCreatePeer(const uint8_t* mac);
+  void handlePeerReceive(const uint8_t* senderMac, const uint8_t* data, size_t len);
+  void handlePeerSent(const uint8_t* peerMac, bool success);
+
   // State
   bool _running;
   char _unitName[17];
@@ -316,7 +319,9 @@ private:
   MeshPeerCallback _peerCallback;
 
   // Peer tracking
-  std::vector<MeshPeerInfo> _peers;
+  std::map<uint64_t, MeshPeer*> _peers;  // MAC as uint64_t key -> peer object
+  std::map<uint64_t, MeshPeerInfo> _peerInfo;  // MAC as uint64_t key -> info
+  MeshPeer* _broadcastPeer;  // Special peer for broadcast messages
 
   // Message deduplication (circular buffer of seen message IDs)
   uint32_t _seenMessages[MESH_MSG_CACHE_SIZE];
@@ -335,9 +340,6 @@ private:
   uint32_t _msgsRelayed;
   uint32_t _msgsDropped;
   uint32_t _messageIdCounter;
-
-  // Singleton instance for callbacks
-  static MeshManager* _instance;
 };
 
 // Global instance

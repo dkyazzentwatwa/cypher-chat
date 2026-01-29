@@ -1,6 +1,6 @@
 # Bleeper_32D - Emergency Communication Device
 
-A secure, production-ready ESP32 BLE emergency communication system designed for field operations requiring reliable, encrypted messaging without infrastructure dependency.
+A secure, production-ready ESP32 emergency communication system designed for field operations requiring reliable, encrypted messaging without infrastructure dependency. ESP-NOW mesh is primary, with optional BLE.
 
 [![Arduino](https://img.shields.io/badge/Arduino-Compatible-00979D?logo=arduino)](https://www.arduino.cc/)
 [![ESP32](https://img.shields.io/badge/ESP32-Powered-E7352C?logo=espressif)](https://www.espressif.com/)
@@ -15,7 +15,8 @@ A secure, production-ready ESP32 BLE emergency communication system designed for
 - **Input Sanitization**: Protection against control character injection
 
 ### 📡 Connectivity
-- **BLE Server/Client Architecture**: Auto-detect role at boot (hold Button 0 for server mode)
+- **ESP-NOW Mesh Networking**: Multi-hop message relay without internet infrastructure
+- **BLE Server/Client (Optional)**: Auto-detect role at boot (hold Button 0 for server mode)
 - **Connection State Machine**: Robust handling with exponential backoff retry (1s → 30s)
 - **Automatic Reconnection**: Smart retry logic with connection watchdog
 - **Multi-Client Support**: Server broadcasts to up to 3 connected clients
@@ -24,7 +25,7 @@ A secure, production-ready ESP32 BLE emergency communication system designed for
 - **4 Quick-Send Buttons**: ACK, ENROUTE, NEED HELP, ALL GOOD
 - **Delivery Confirmation**: HMAC-authenticated ACK with retry (up to 5 attempts)
 - **Message History**: 10-message scrollable buffer with timestamps
-- **Emergency Broadcast**: Long-press Button 2 for 3x redundant emergency alert (30s auto-cancel)
+- **Emergency Broadcast**: Long-press Button 2 for mesh emergency alert (30s auto-cancel; BLE redundancy optional)
 
 ### 🖥️ Display & Interface
 - **Multi-Screen OLED UI**: Status, messages, and history screens (128x64)
@@ -106,10 +107,12 @@ arduino-cli core install esp32:esp32
 arduino-cli lib install "Adafruit GFX Library"
 arduino-cli lib install "Adafruit SSD1306"
 
-# Clone NimBLE-Arduino (required for BLE)
+# Clone NimBLE-Arduino (required only if BLE_ENABLED=true)
 cd ~/Arduino/libraries  # or your Arduino libraries path
 git clone https://github.com/h2zero/NimBLE-Arduino.git
 ```
+
+**BLE Toggle:** Set `BLE_ENABLED` in `Config.h`. When `false`, BLE code is compiled out and ESP-NOW mesh is the primary transport.
 
 ### Compilation
 ```bash
@@ -158,7 +161,7 @@ Device prompts for 6-digit passkey via serial terminal (115200 baud):
 ### 4. Emergency Broadcast
 - **Activate**: Long-press Button 2 (hold for 1 second)
 - **Cancel**: Long-press Button 0, or wait 30 seconds for auto-cancel
-- Sends 3x redundant transmissions for reliability
+- Sends mesh emergency broadcast for long-range relay (BLE redundancy if enabled)
 
 ## Terminal Interface
 

@@ -1,15 +1,51 @@
 #include "MeshManager.h"
 #include "MessageAuth.h"
 #include "Config.h"
+#include "OutputManager.h"
 #include <cstring>
 #include <algorithm>
 
-// Singleton instance
-MeshManager* MeshManager::_instance = nullptr;
+// ============================================================================
+// MeshPeer Implementation
+// ============================================================================
+
+void MeshPeer::onReceive(const uint8_t *data, size_t len, bool broadcast) {
+  (void)broadcast;
+  if (_manager) {
+    _manager->handlePeerReceive(addr(), data, len);
+  }
+}
+
+void MeshPeer::onSent(bool success) {
+  if (_manager) {
+    _manager->handlePeerSent(addr(), success);
+  }
+}
+
+// ============================================================================
+// MeshManager Implementation
+// ============================================================================
+
 MeshManager meshMgr;
 
 // Broadcast MAC address
 static const uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// Callback for ESP-NOW new peer packets (declared as friend in MeshManager.h)
+void onNewPeerPacket(const esp_now_recv_info_t *info, const uint8_t *data, int len, void *arg) {
+  MeshManager *manager = static_cast<MeshManager*>(arg);
+  if (manager) {
+    manager->handlePeerReceive(info->src_addr, data, len);
+  }
+}
+
+static uint64_t macToKey(const uint8_t* mac) {
+  uint64_t key = 0;
+  for (int i = 0; i < 6; i++) {
+    key = (key << 8) | mac[i];
+  }
+  return key;
+}
 
 MeshManager::MeshManager()
   : _running(false)
@@ -24,13 +60,13 @@ MeshManager::MeshManager()
   , _msgsRelayed(0)
   , _msgsDropped(0)
   , _messageIdCounter(0)
+  , _broadcastPeer(nullptr)
 {
   memset(_unitName, 0, sizeof(_unitName));
   memset(_myMac, 0, sizeof(_myMac));
   memset(_seenMessages, 0, sizeof(_seenMessages));
   memset(_storeQueue, 0, sizeof(_storeQueue));
   _myGPS = {0, 0, 0, false};
-  _instance = this;
 }
 
 bool MeshManager::begin(const char* unitName, uint32_t passkey) {
@@ -47,24 +83,36 @@ bool MeshManager::begin(const char* unitName, uint32_t passkey) {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
+  // Wait for WiFi to start
+  while (!WiFi.STA.started()) {
+    delay(10);
+  }
+
+  // Set WiFi channel using new API
+  WiFi.setChannel(MESH_CHANNEL);
+
   // Get our MAC address
   WiFi.macAddress(_myMac);
 
-  // Set WiFi channel
-  esp_wifi_set_channel(MESH_CHANNEL, WIFI_SECOND_CHAN_NONE);
-
-  // Initialize ESP-NOW
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("MeshManager: ESP-NOW init failed");
+  // Initialize ESP-NOW using new class-based API
+  if (!ESP_NOW.begin()) {
+    output.println("MeshManager: ESP-NOW init failed");
     return false;
   }
 
-  // Register callbacks
-  esp_now_register_send_cb(onDataSent);
-  esp_now_register_recv_cb(onDataRecv);
+  // Create and register broadcast peer for flood messages
+  _broadcastPeer = new MeshPeer(ESP_NOW.BROADCAST_ADDR, MESH_CHANNEL, WIFI_IF_STA, nullptr);
+  _broadcastPeer->setManager(this);
+  if (!_broadcastPeer->begin()) {
+    output.println("MeshManager: Failed to register broadcast peer");
+    delete _broadcastPeer;
+    _broadcastPeer = nullptr;
+    ESP_NOW.end();
+    return false;
+  }
 
-  // Add broadcast peer for flood messages
-  addEspNowPeer(BROADCAST_MAC);
+  // Register global receive callback to catch ALL ESP-NOW packets
+  ESP_NOW.onNewPeer(onNewPeerPacket, this);
 
   // Generate initial message ID from MAC + time
   _messageIdCounter = (_myMac[4] << 24) | (_myMac[5] << 16) | (millis() & 0xFFFF);
@@ -73,14 +121,17 @@ bool MeshManager::begin(const char* unitName, uint32_t passkey) {
   _lastHeartbeat = millis();
   _lastPeerPrune = millis();
 
-  Serial.print("MeshManager: Started on channel ");
-  Serial.print(MESH_CHANNEL);
-  Serial.print(", MAC: ");
+  output.print("MeshManager: Started on channel ");
+  output.print(MESH_CHANNEL);
+  output.print(", MAC: ");
   for (int i = 0; i < 6; i++) {
-    if (i > 0) Serial.print(":");
-    Serial.printf("%02X", _myMac[i]);
+    if (i > 0) output.print(":");
+    output.printf("%02X", _myMac[i]);
   }
-  Serial.println();
+  output.println();
+
+  output.printf("ESP-NOW version: %d, max data length: %d\n",
+                ESP_NOW.getVersion(), ESP_NOW.getMaxDataLen());
 
   // Send initial heartbeat to announce presence
   sendHeartbeat();
@@ -91,14 +142,67 @@ bool MeshManager::begin(const char* unitName, uint32_t passkey) {
 void MeshManager::end() {
   if (!_running) return;
 
-  esp_now_unregister_send_cb();
-  esp_now_unregister_recv_cb();
-  esp_now_deinit();
+  // Delete broadcast peer
+  if (_broadcastPeer) {
+    delete _broadcastPeer;
+    _broadcastPeer = nullptr;
+  }
+
+  // Delete all mesh peers
+  for (auto& pair : _peers) {
+    delete pair.second;
+  }
+  _peers.clear();
+  _peerInfo.clear();
+
+  // Shutdown ESP-NOW
+  ESP_NOW.end();
 
   _running = false;
-  _peers.clear();
 
-  Serial.println("MeshManager: Stopped");
+  output.println("MeshManager: Stopped");
+}
+
+MeshPeer* MeshManager::findOrCreatePeer(const uint8_t* mac) {
+  if (!mac) return nullptr;
+
+  uint64_t macKey = macToKey(mac);
+  auto it = _peers.find(macKey);
+  if (it != _peers.end()) {
+    return it->second;
+  }
+
+  MeshPeer* peer = new MeshPeer(mac, MESH_CHANNEL, WIFI_IF_STA, nullptr);
+  peer->setManager(this);
+
+  if (peer->begin()) {
+    _peers[macKey] = peer;
+    output.printf("MeshManager: Added peer " MACSTR "\n", MAC2STR(mac));
+    return peer;
+  }
+
+  output.printf("MeshManager: Failed to add peer " MACSTR "\n", MAC2STR(mac));
+  delete peer;
+  return nullptr;
+}
+
+void MeshManager::handlePeerReceive(const uint8_t* senderMac, const uint8_t* data, size_t len) {
+  if (!_running || !data || len < sizeof(MeshHeader)) {
+    return;
+  }
+
+  const MeshPacket* packet = reinterpret_cast<const MeshPacket*>(data);
+
+  // RSSI is not provided via the class-based API callbacks.
+  int8_t rssi = -50;
+  processPacket(packet, senderMac, rssi);
+}
+
+void MeshManager::handlePeerSent(const uint8_t* peerMac, bool success) {
+  if (!success) {
+    _msgsDropped++;
+    output.printf("MeshManager: Send failed to " MACSTR "\n", MAC2STR(peerMac));
+  }
 }
 
 void MeshManager::update() {
@@ -148,21 +252,29 @@ uint32_t MeshManager::broadcast(const uint8_t* data, size_t len, MeshMessageType
 
   // Sign packet
   if (!signPacket(&packet)) {
-    Serial.println("MeshManager: Failed to sign packet");
+    output.println("MeshManager: Failed to sign packet");
     return 0;
   }
 
   // Mark as seen to prevent echo
   markMessageSeen(packet.header.messageId);
 
-  // Send via ESP-NOW broadcast
-  esp_err_t result = esp_now_send(BROADCAST_MAC, (uint8_t*)&packet, sizeof(MeshHeader) + len + HMAC_SIZE);
-  if (result == ESP_OK) {
+  // Send via ESP-NOW broadcast using new API
+  size_t totalSize = sizeof(MeshHeader) + len + HMAC_SIZE;
+
+  if (!_broadcastPeer) {
+    output.println("MeshManager: ERROR - Broadcast peer is NULL!");
+    return 0;
+  }
+
+  bool sendResult = _broadcastPeer->sendMessage((uint8_t*)&packet, totalSize);
+
+  if (sendResult) {
     _msgsSent++;
     return packet.header.messageId;
   }
 
-  Serial.println("MeshManager: Broadcast send failed");
+  output.println("MeshManager: Broadcast send failed");
   return 0;
 }
 
@@ -198,21 +310,17 @@ uint32_t MeshManager::sendTo(const uint8_t* destMac, const uint8_t* data, size_t
   // Mark as seen
   markMessageSeen(packet.header.messageId);
 
-  // Check if peer is known and online
-  MeshPeerInfo* peer = findPeer(destMac);
-  if (peer && peer->isOnline && peer->hopDistance == 1) {
-    // Direct send to known peer
-    addEspNowPeer(destMac);
-    esp_err_t result = esp_now_send(destMac, (uint8_t*)&packet, sizeof(MeshHeader) + len + HMAC_SIZE);
-    if (result == ESP_OK) {
-      _msgsSent++;
-      return packet.header.messageId;
-    }
+  // Find or create peer
+  MeshPeer* peer = findOrCreatePeer(destMac);
+  if (peer &&
+      peer->sendMessage((uint8_t*)&packet, sizeof(MeshHeader) + len + HMAC_SIZE)) {
+    _msgsSent++;
+    return packet.header.messageId;
   }
 
   // Peer not directly reachable - broadcast for mesh routing
-  esp_err_t result = esp_now_send(BROADCAST_MAC, (uint8_t*)&packet, sizeof(MeshHeader) + len + HMAC_SIZE);
-  if (result == ESP_OK) {
+  if (_broadcastPeer &&
+      _broadcastPeer->sendMessage((uint8_t*)&packet, sizeof(MeshHeader) + len + HMAC_SIZE)) {
     _msgsSent++;
     return packet.header.messageId;
   }
@@ -324,7 +432,7 @@ bool MeshManager::storeForDelivery(const uint8_t* destMac, const uint8_t* data, 
   _storeQueue[slot].retryCount = 0;
   _storeQueue[slot].active = true;
 
-  Serial.printf("MeshManager: Stored message for later delivery (%d/%d slots used)\n",
+  output.printf("MeshManager: Stored message for later delivery (%d/%d slots used)\n",
                 getStoredMessageCount(), MESH_STORE_QUEUE_SIZE);
 
   return true;
@@ -339,13 +447,18 @@ void MeshManager::onPeerUpdate(MeshPeerCallback callback) {
 }
 
 std::vector<MeshPeerInfo> MeshManager::getPeers() const {
-  return _peers;
+  std::vector<MeshPeerInfo> peers;
+  peers.reserve(_peerInfo.size());
+  for (const auto& entry : _peerInfo) {
+    peers.push_back(entry.second);
+  }
+  return peers;
 }
 
 int MeshManager::getOnlinePeerCount() const {
   int count = 0;
-  for (const auto& peer : _peers) {
-    if (peer.isOnline) count++;
+  for (const auto& entry : _peerInfo) {
+    if (entry.second.isOnline) count++;
   }
   return count;
 }
@@ -360,35 +473,17 @@ void MeshManager::setGPS(const GPSCoordinates& gps) {
   _myGPS = gps;
 }
 
-// Static ESP-NOW callbacks
-void MeshManager::onDataSent(const uint8_t* mac, esp_now_send_status_t status) {
-  // Could track delivery status here if needed
-  if (status != ESP_NOW_SEND_SUCCESS) {
-    if (_instance) {
-      _instance->_msgsDropped++;
-    }
-  }
-}
-
-void MeshManager::onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
-  if (_instance == nullptr || !_instance->_running) return;
-  if (len < (int)sizeof(MeshHeader)) return;
-
-  const MeshPacket* packet = (const MeshPacket*)data;
-  _instance->processPacket(packet, info->src_addr, info->rx_ctrl->rssi);
-}
-
 void MeshManager::processPacket(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi) {
   // Verify protocol version
   if (packet->header.version != 0x01) {
-    Serial.println("MeshManager: Unknown protocol version");
+    output.println("MeshManager: Unknown protocol version");
     _msgsDropped++;
     return;
   }
 
   // Verify HMAC
   if (!verifyPacket(packet)) {
-    Serial.println("MeshManager: HMAC verification failed - spoofed/corrupted");
+    output.println("MeshManager: HMAC verification failed - spoofed/corrupted");
     _msgsDropped++;
     return;
   }
@@ -432,7 +527,7 @@ void MeshManager::processPacket(const MeshPacket* packet, const uint8_t* senderM
       break;
 
     default:
-      Serial.printf("MeshManager: Unknown message type: 0x%02X\n", packet->header.type);
+      output.printf("MeshManager: Unknown message type: 0x%02X\n", packet->header.type);
       break;
   }
 }
@@ -470,7 +565,9 @@ void MeshManager::handleDataMessage(const MeshPacket* packet, const uint8_t* sen
       signPacket(&ack);
 
       // Send ACK
-      esp_now_send(BROADCAST_MAC, (uint8_t*)&ack, sizeof(MeshHeader) + 4 + HMAC_SIZE);
+      if (_broadcastPeer) {
+        _broadcastPeer->sendMessage((uint8_t*)&ack, sizeof(MeshHeader) + 4 + HMAC_SIZE);
+      }
     }
   }
 
@@ -511,7 +608,8 @@ void MeshManager::handleAck(const MeshPacket* packet) {
     memcpy(&originalMsgId, packet->payload, 4);
 
     // Could notify application of delivery confirmation here
-    Serial.printf("MeshManager: ACK received for message %08X\n", originalMsgId);
+    output.printf("MeshManager: ACK received for message %08lX\n",
+                  (unsigned long)originalMsgId);
 
     // Clear from store queue if present
     for (int i = 0; i < MESH_STORE_QUEUE_SIZE; i++) {
@@ -579,9 +677,9 @@ void MeshManager::relayPacket(MeshPacket* packet) {
   signPacket(packet);
 
   // Broadcast relay
-  esp_err_t result = esp_now_send(BROADCAST_MAC, (uint8_t*)packet,
-                                   sizeof(MeshHeader) + packet->header.payloadLen + HMAC_SIZE);
-  if (result == ESP_OK) {
+  if (_broadcastPeer &&
+      _broadcastPeer->sendMessage((uint8_t*)packet,
+                                  sizeof(MeshHeader) + packet->header.payloadLen + HMAC_SIZE)) {
     _msgsRelayed++;
   }
 }
@@ -609,57 +707,82 @@ void MeshManager::updatePeer(const uint8_t* mac, int8_t rssi, const char* unitNa
   // Don't track broadcast address
   if (memcmp(mac, BROADCAST_MAC, 6) == 0) return;
 
-  // Find existing peer
-  MeshPeerInfo* peer = findPeer(mac);
-  bool isNew = (peer == nullptr);
+  uint64_t macKey = macToKey(mac);
+  auto it = _peerInfo.find(macKey);
+  bool isNew = (it == _peerInfo.end());
 
   if (isNew) {
     // Add new peer
-    if (_peers.size() >= MESH_MAX_PEERS) {
-      // Remove oldest offline peer
-      auto it = std::find_if(_peers.begin(), _peers.end(),
-                             [](const MeshPeerInfo& p) { return !p.isOnline; });
-      if (it != _peers.end()) {
-        _peers.erase(it);
-      } else {
-        // All online, remove last
-        _peers.pop_back();
+    if (_peerInfo.size() >= MESH_MAX_PEERS) {
+      uint64_t evictKey = 0;
+      bool evictFound = false;
+
+      for (const auto& entry : _peerInfo) {
+        if (!entry.second.isOnline) {
+          evictKey = entry.first;
+          evictFound = true;
+          break;
+        }
+      }
+
+      if (!evictFound && !_peerInfo.empty()) {
+        evictKey = _peerInfo.begin()->first;
+        evictFound = true;
+      }
+
+      if (evictFound) {
+        _peerInfo.erase(evictKey);
+        auto peerIt = _peers.find(evictKey);
+        if (peerIt != _peers.end()) {
+          delete peerIt->second;
+          _peers.erase(peerIt);
+        }
       }
     }
 
     MeshPeerInfo newPeer;
     memset(&newPeer, 0, sizeof(newPeer));
     memcpy(newPeer.mac, mac, 6);
-    _peers.push_back(newPeer);
-    peer = &_peers.back();
+    newPeer.rssi = rssi;
+    newPeer.hopDistance = hopDistance;
+    newPeer.lastSeen = millis();
+    newPeer.isOnline = true;
+    if (unitName && strlen(unitName) > 0) {
+      strncpy(newPeer.unitName, unitName, sizeof(newPeer.unitName) - 1);
+      newPeer.unitName[sizeof(newPeer.unitName) - 1] = '\0';
+    }
+    _peerInfo[macKey] = newPeer;
+    it = _peerInfo.find(macKey);
   }
 
   // Update peer info
+  MeshPeerInfo& peer = it->second;
   if (rssi != -127) {
-    peer->rssi = rssi;
+    peer.rssi = rssi;
   }
-  peer->lastSeen = millis();
-  peer->hopDistance = hopDistance;
-  peer->isOnline = true;
+  peer.lastSeen = millis();
+  peer.hopDistance = hopDistance;
+  peer.isOnline = true;
 
   if (unitName && strlen(unitName) > 0) {
-    strncpy(peer->unitName, unitName, sizeof(peer->unitName) - 1);
-    peer->unitName[sizeof(peer->unitName) - 1] = '\0';
+    strncpy(peer.unitName, unitName, sizeof(peer.unitName) - 1);
+    peer.unitName[sizeof(peer.unitName) - 1] = '\0';
   }
 
-  // Add to ESP-NOW peer list for direct communication
-  addEspNowPeer(mac);
+  // Ensure ESP-NOW peer is registered
+  findOrCreatePeer(mac);
 
   // Notify callback
   if (_peerCallback) {
-    _peerCallback(peer, isNew);
+    _peerCallback(&peer, isNew);
   }
 }
 
 void MeshManager::pruneOfflinePeers() {
   uint32_t now = millis();
 
-  for (auto& peer : _peers) {
+  for (auto& entry : _peerInfo) {
+    MeshPeerInfo& peer = entry.second;
     if (peer.isOnline && (now - peer.lastSeen > MESH_PEER_TIMEOUT_MS)) {
       peer.isOnline = false;
 
@@ -671,12 +794,12 @@ void MeshManager::pruneOfflinePeers() {
 }
 
 MeshPeerInfo* MeshManager::findPeer(const uint8_t* mac) {
-  for (auto& peer : _peers) {
-    if (memcmp(peer.mac, mac, 6) == 0) {
-      return &peer;
-    }
-  }
-  return nullptr;
+  if (!mac) return nullptr;
+
+  uint64_t macKey = macToKey(mac);
+  auto it = _peerInfo.find(macKey);
+  if (it == _peerInfo.end()) return nullptr;
+  return &it->second;
 }
 
 void MeshManager::processStoreQueue() {
@@ -688,8 +811,8 @@ void MeshManager::processStoreQueue() {
     // Check if message expired
     if (now - _storeQueue[i].storedTime > MESH_MSG_EXPIRE_MS) {
       _storeQueue[i].active = false;
-      Serial.printf("MeshManager: Stored message %08X expired\n",
-                    _storeQueue[i].packet.header.messageId);
+      output.printf("MeshManager: Stored message %08lX expired\n",
+                    (unsigned long)_storeQueue[i].packet.header.messageId);
       continue;
     }
 
@@ -715,11 +838,11 @@ void MeshManager::deliverStoredMessages(const uint8_t* peerMac) {
       memcpy(packet->header.lastHopMac, _myMac, 6);
       signPacket(packet);
 
-      esp_err_t result = esp_now_send(BROADCAST_MAC, (uint8_t*)packet,
-                                       sizeof(MeshHeader) + packet->header.payloadLen + HMAC_SIZE);
-
-      if (result == ESP_OK) {
-        Serial.printf("MeshManager: Delivered stored message %08X\n", packet->header.messageId);
+      if (_broadcastPeer &&
+          _broadcastPeer->sendMessage((uint8_t*)packet,
+                                      sizeof(MeshHeader) + packet->header.payloadLen + HMAC_SIZE)) {
+        output.printf("MeshManager: Delivered stored message %08lX\n",
+                      (unsigned long)packet->header.messageId);
         _msgsSent++;
         // Keep active until ACK received or expired
         _storeQueue[i].retryCount++;
@@ -739,9 +862,6 @@ void MeshManager::sendHeartbeat() {
 
 bool MeshManager::signPacket(MeshPacket* packet) {
   if (packet == nullptr) return false;
-
-  // Build message to sign: header + payload
-  size_t signLen = sizeof(MeshHeader) + packet->header.payloadLen;
 
   // Generate HMAC
   uint8_t hmac[32];
@@ -786,20 +906,7 @@ uint32_t MeshManager::generateMessageId() {
 }
 
 bool MeshManager::addEspNowPeer(const uint8_t* mac) {
-  if (mac == nullptr) return false;
-
-  // Check if already added
-  if (esp_now_is_peer_exist(mac)) {
-    return true;
-  }
-
-  esp_now_peer_info_t peerInfo;
-  memset(&peerInfo, 0, sizeof(peerInfo));
-  memcpy(peerInfo.peer_addr, mac, 6);
-  peerInfo.channel = MESH_CHANNEL;
-  peerInfo.encrypt = false;  // Using application-level HMAC instead
-
-  return esp_now_add_peer(&peerInfo) == ESP_OK;
+  return findOrCreatePeer(mac) != nullptr;
 }
 
 int MeshManager::getStoredMessageCount() const {

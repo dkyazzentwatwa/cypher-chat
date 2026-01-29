@@ -1,9 +1,13 @@
-#include "Config.h"
+#include "Config_Starbeam.h"
 #include "MessageAuth.h"
 #include "DisplayManager.h"
 #include "ButtonManager.h"
 #include "LEDManager.h"
 #include "BuzzerManager.h"
+#include "OutputManager.h"
+#if BLE_UART_ENABLED
+#include "BLEUARTManager.h"
+#endif
 #include "TerminalManager.h"
 #include "Server.h"
 #include "Client.h"
@@ -13,14 +17,26 @@
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET_PIN);
 unsigned long lastButtonPressMillis = 0;
 const int DEBOUNCE_DELAY = 200;
-const int BUTTON_PINS[] = { 17, 5, 18, 19 };
-const char* BUTTON_LABELS[] = { "ACK", "ENROUTE", "NEED HELP", "ALL GOOD" };
+const int BUTTON_PINS[] = { KEY1_PIN, KEY2_PIN, KEY3_PIN };
+const char* BUTTON_LABELS[] = { "KEY1", "KEY2", "KEY3" };
 
 bool isServer = false;
 String unitName = DEFAULT_UNIT_NAME;
 uint32_t currentPasskey = DEFAULT_PASSKEY;
 String messageHistory[10];
 int historyCount = 0;
+
+// Global connection state
+#include "StateManager.h"
+StateManager connectionState;
+
+// BLE Global objects (referenced by Server.cpp, Client.cpp, and loops)
+#if BLE_ENABLED
+#include <NimBLEDevice.h>
+extern NimBLEServer* pServer;
+extern NimBLECharacteristic* pTxCharacteristic;
+extern NimBLERemoteCharacteristic* pRemoteRxCharacteristic;
+#endif
 
 // Emergency broadcast state
 bool emergencyActive = false;
@@ -69,12 +85,14 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
     msg[msgLen] = '\0';
 
     // Display emergency with high priority
-    Serial.printf("\n!!! MESH EMERGENCY from %s (hops: %d, rssi: %d) !!!\n",
-                  senderStr, packet->header.hopCount, rssi);
-    Serial.printf("Message: %s\n", msg);
+    output.println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    output.printf("🚨 EMERGENCY from %s\n", senderStr);
+    output.printf("   Message: %s\n", msg);
     if (gps.valid) {
-      Serial.printf("GPS: %.6f, %.6f (alt: %.1fm)\n", gps.latitude, gps.longitude, gps.altitude);
+      output.printf("   GPS: %.6f, %.6f (%.1fm)\n", gps.latitude, gps.longitude, gps.altitude);
     }
+    output.printf("   Signal: %d dBm | Hops: %d\n", rssi, packet->header.hopCount);
+    output.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
     // Trigger emergency indicators
     ledMgr.flash(LED_EMERGENCY, 2000);
@@ -87,8 +105,7 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
 
   } else {
     // Regular data message
-    Serial.printf("[MESH RX] From %s (hops: %d, rssi: %d): %s\n",
-                  senderStr, packet->header.hopCount, rssi, msg);
+    output.printf("Mesh RX: %s\n", msg);
 
     // Display and store
     char incomingMsg[32];
@@ -102,19 +119,17 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
 }
 
 void onMeshPeerUpdate(const MeshPeerInfo* peer, bool isNew) {
-  char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           peer->mac[0], peer->mac[1], peer->mac[2],
-           peer->mac[3], peer->mac[4], peer->mac[5]);
-
   if (isNew) {
-    Serial.printf("[MESH] New peer discovered: %s", macStr);
     if (strlen(peer->unitName) > 0) {
-      Serial.printf(" (%s)", peer->unitName);
+      output.printf("✓ Mesh peer: %s (RSSI: %d dBm)\n", peer->unitName, peer->rssi);
+    } else {
+      output.printf("✓ Mesh peer: %02X:%02X (RSSI: %d dBm)\n",
+                    peer->mac[4], peer->mac[5], peer->rssi);
     }
-    Serial.printf(" rssi=%d\n", peer->rssi);
   } else if (!peer->isOnline) {
-    Serial.printf("[MESH] Peer offline: %s\n", macStr);
+    if (strlen(peer->unitName) > 0) {
+      output.printf("✗ Mesh peer offline: %s\n", peer->unitName);
+    }
   }
 }
 #endif
@@ -166,18 +181,17 @@ void broadcastEmergency() {
 
     char coordStr[64];
     gpsMgr.formatCoordinates(coordStr, sizeof(coordStr));
-    Serial.printf("EMERGENCY includes GPS: %s\n", coordStr);
+    output.printf("EMERGENCY includes GPS: %s\n", coordStr);
 
     char mapsUrl[80];
     gpsMgr.formatMapsURL(mapsUrl, sizeof(mapsUrl));
-    Serial.printf("  Location: %s\n", mapsUrl);
+    output.printf("  Location: %s\n", mapsUrl);
   }
 #endif
 
   uint32_t meshMsgId = meshMgr.sendEmergency(baseMsg, gpsPtr);
   if (meshMsgId > 0) {
-    Serial.printf("EMERGENCY sent via MESH (id: %08X, TTL: %d hops)\n",
-                  meshMsgId, MESH_MAX_TTL);
+    output.printf("🚨 Emergency broadcast sent (TTL: %d hops)\n", MESH_MAX_TTL);
   }
 #endif
 
@@ -199,18 +213,19 @@ void broadcastEmergency() {
       // Broadcast via appropriate BLE channel
       if (isServer) {
         // Server broadcasts to all clients
-        extern NimBLECharacteristic* pTxCharacteristic;
-        extern NimBLEServer* pServer;
+#if BLE_ENABLED
         if (pTxCharacteristic && pServer && pServer->getConnectedCount() > 0) {
           pTxCharacteristic->setValue(std::string(authenticatedMsg));
           pTxCharacteristic->notify(true);
         }
+#endif
       } else {
         // Client sends to server
-        extern NimBLERemoteCharacteristic* pRemoteRxCharacteristic;
+#if BLE_ENABLED
         if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
           pRemoteRxCharacteristic->writeValue(std::string(authenticatedMsg), false);
         }
+#endif
       }
 
       delay(100); // Small delay between transmissions
@@ -218,7 +233,6 @@ void broadcastEmergency() {
   }
 
   addToHistory("EMERGENCY");
-  Serial.println("EMERGENCY BROADCAST SENT (Mesh + BLE 3x redundancy)");
 }
 
 void cancelEmergency() {
@@ -226,7 +240,7 @@ void cancelEmergency() {
   ledMgr.setPattern(LED_IDLE);
   buzzerMgr.stop();
   oledPrint("Emergency canceled", "");
-  Serial.println("Emergency canceled");
+  output.println("Emergency canceled");
 }
 
 void handleEmergency() {
@@ -251,17 +265,31 @@ void handleButtons() {
 
   if (event == BUTTON_NONE) return;
 
+  if (event == BUTTON_PRESS) {
+    if (buttonIndex == 2) {
+      // Button 3 (index 2): Cycle OLED screens
+      DisplayScreen current = displayMgr.getCurrentScreen();
+      if (current == SCREEN_STATUS) displayMgr.setScreen(SCREEN_MESSAGES);
+      else if (current == SCREEN_MESSAGES) displayMgr.setScreen(SCREEN_HISTORY);
+      else displayMgr.setScreen(SCREEN_STATUS);
+      
+      output.println("Screen cycled via Button 3");
+      beep();
+      return;
+    }
+  }
+
   if (event == BUTTON_LONG_PRESS) {
     if (buttonIndex == 2) {
-      // Button 2 long-press: Trigger emergency
+      // Button 3 long-press: Trigger emergency
       if (!emergencyActive) {
-        Serial.println("Emergency broadcast triggered (Button 2 long-press)");
+        output.println("Emergency broadcast triggered (Button 3 long-press)");
         broadcastEmergency();
       }
     } else if (buttonIndex == 0) {
       // Button 0 long-press: Cancel emergency
       if (emergencyActive) {
-        Serial.println("Emergency canceled (Button 0 long-press)");
+        output.println("Emergency canceled (Button 0 long-press)");
         cancelEmergency();
       }
     }
@@ -271,7 +299,7 @@ void handleButtons() {
 
 void configurePasskey() {
   oledPrint("Enter 6-digit PIN", "Serial (10s timeout)");
-  Serial.println("Enter 6-digit passkey (or press Enter for default 123456):");
+  output.println("Enter 6-digit passkey (or press Enter for default 123456):");
 
   unsigned long start = millis();
   String input = "";
@@ -282,34 +310,34 @@ void configurePasskey() {
       if (c == '\n' || c == '\r') break;
       if (isdigit(c) && input.length() < PASSKEY_DIGITS) {
         input += c;
-        Serial.print('*');  // Echo asterisk for feedback
+        output.print('*');  // Echo asterisk for feedback
       }
     }
   }
-  Serial.println();
+  output.println();
 
   // Validate passkey
   if (input.length() == PASSKEY_DIGITS) {
     uint32_t newPasskey = input.toInt();
     if (newPasskey >= MIN_PASSKEY && newPasskey <= MAX_PASSKEY) {
       currentPasskey = newPasskey;
-      Serial.print("Passkey set to: ");
-      Serial.println(currentPasskey);
+      output.print("Passkey set to: ");
+      output.println(currentPasskey);
       oledPrint("PIN configured", "Secure connection");
       delay(1000);
       return;
     } else {
-      Serial.println("ERROR: Passkey out of range (100000-999999)");
+      output.println("ERROR: Passkey out of range (100000-999999)");
     }
   } else if (input.length() > 0) {
-    Serial.print("ERROR: Passkey must be exactly ");
-    Serial.print(PASSKEY_DIGITS);
-    Serial.println(" digits");
+    output.print("ERROR: Passkey must be exactly ");
+    output.print(PASSKEY_DIGITS);
+    output.println(" digits");
   }
 
   // Use default passkey
-  Serial.println("Using default passkey: 123456");
-  Serial.println("WARNING: Default passkey is insecure! Change it for production use.");
+  output.println("Using default passkey: 123456");
+  output.println("WARNING: Default passkey is insecure! Change it for production use.");
   oledPrint("Using default PIN", "⚠ INSECURE ⚠");
   delay(2000);
 }
@@ -348,12 +376,12 @@ void simulateButtonPress(int buttonIndex) {
       char authenticatedMsg[MAX_MESSAGE_SIZE];
       snprintf(authenticatedMsg, sizeof(authenticatedMsg), "%s:%s", baseMsg, hmacHex);
 
-      extern NimBLECharacteristic* pTxCharacteristic;
-      extern NimBLEServer* pServer;
+#if BLE_ENABLED
       if (pTxCharacteristic && pServer && pServer->getConnectedCount() > 0) {
         pTxCharacteristic->setValue(std::string(authenticatedMsg));
         pTxCharacteristic->notify(true);
       }
+#endif
 
       addToHistory(baseMsg);
       char sentMsg[32];
@@ -378,10 +406,11 @@ void simulateButtonPress(int buttonIndex) {
       char authenticatedMsg[MAX_MESSAGE_SIZE];
       snprintf(authenticatedMsg, sizeof(authenticatedMsg), "%s:%s", baseMsg, hmacHex);
 
-      extern NimBLERemoteCharacteristic* pRemoteRxCharacteristic;
+#if BLE_ENABLED
       if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
         pRemoteRxCharacteristic->writeValue(std::string(authenticatedMsg), false);
       }
+#endif
 
       addToHistory(baseMsg);
       char sentMsg[32];
@@ -396,12 +425,15 @@ void setup() {
   Serial.begin(115200);
   delay(100);  // Let serial stabilize
 
+  // Initialize output manager
+  output.begin();
+
   // Initialize terminal interface first
   terminalMgr.begin();
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    Serial.println(F("SSD1306 allocation failed"));
+    output.println(F("SSD1306 allocation failed"));
     for (;;)
       ;
   }
@@ -409,15 +441,8 @@ void setup() {
   display.display();
 
   for (int i = 0; i < NUM_BUTTONS; i++) {
-#if defined(ARDUINO_ARCH_ESP32)
-    if (digitalPinCanOutput(BUTTON_PINS[i])) {
-      pinMode(BUTTON_PINS[i], INPUT_PULLUP);
-    } else {
-      pinMode(BUTTON_PINS[i], INPUT);
-    }
-#else
-    pinMode(BUTTON_PINS[i], INPUT_PULLUP);
-#endif
+    // Starbeam pins 34, 36, 39 are input-only and use external resistors
+    pinMode(BUTTON_PINS[i], INPUT);
   }
 
 #if BUZZER_PIN != -1
@@ -434,6 +459,11 @@ void setup() {
   detectRole();
   configurePasskey();
 
+  // Initialize BLE UART service with unit name (after detectRole sets it)
+#if BLE_UART_ENABLED
+  bleUARTMgr.begin(unitName.c_str());
+#endif
+
   // Print configuration to terminal
   terminalMgr.printConfiguration();
 
@@ -448,16 +478,16 @@ void setup() {
 #if MESH_ENABLED
   oledPrint("Starting Mesh...", "ESP-NOW");
   if (meshMgr.begin(unitName.c_str(), currentPasskey)) {
-    Serial.println("Mesh networking enabled (ESP-NOW)");
-    Serial.printf("  - Range: ~250m (vs BLE ~30m)\n");
-    Serial.printf("  - TTL: %d hops max\n", MESH_DEFAULT_TTL);
-    Serial.printf("  - Store-forward queue: %d messages\n", MESH_STORE_QUEUE_SIZE);
+    output.println("Mesh networking enabled (ESP-NOW)");
+    output.printf("  - Range: ~250m (vs BLE ~30m)\n");
+    output.printf("  - TTL: %d hops max\n", MESH_DEFAULT_TTL);
+    output.printf("  - Store-forward queue: %d messages\n", MESH_STORE_QUEUE_SIZE);
 
     // Set up mesh message callback
     meshMgr.onMessage(onMeshMessage);
     meshMgr.onPeerUpdate(onMeshPeerUpdate);
   } else {
-    Serial.println("WARNING: Mesh init failed, BLE-only mode");
+    output.println("WARNING: Mesh init failed, BLE-only mode");
   }
 #endif
 
@@ -465,10 +495,10 @@ void setup() {
 #if GPS_ENABLED
   oledPrint("Starting GPS...", "Waiting for fix");
   if (gpsMgr.begin()) {
-    Serial.println("GPS module initialized");
-    Serial.printf("  Waiting for satellite fix...\n");
+    output.println("GPS module initialized");
+    output.printf("  Waiting for satellite fix...\n");
   } else {
-    Serial.println("GPS module not detected");
+    output.println("GPS module not detected");
   }
 #endif
 }

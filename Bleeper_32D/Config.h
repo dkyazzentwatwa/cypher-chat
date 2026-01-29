@@ -98,5 +98,5 @@ extern const int DEBOUNCE_DELAY;
 
 // Shared utilities
 void beep();
-void oledPrint(const char* line1, const char* line2 = "");
+void oledPrint(const char* line1, const char* line2);
 
