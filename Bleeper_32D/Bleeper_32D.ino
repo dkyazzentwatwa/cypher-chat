@@ -9,8 +9,6 @@
 #include "BLEUARTManager.h"
 #endif
 #include "TerminalManager.h"
-#include "Server.h"
-#include "Client.h"
 #include "MeshManager.h"
 #include "GPSManager.h"
 
@@ -467,11 +465,8 @@ void setup() {
   // Print configuration to terminal
   terminalMgr.printConfiguration();
 
-  if (isServer) {
-    setupServer();
-  } else {
-    setupClient();
-  }
+  // Note: Old BLE server/client code removed (BLE_ENABLED=false)
+  // Mesh networking is now the primary transport
 
   // Initialize mesh networking layer (ESP-NOW)
   // This runs alongside BLE for extended range and true mesh relay
@@ -513,11 +508,7 @@ void loop() {
   // Handle button events (long-press for emergency)
   handleButtons();
 
-  if (isServer) {
-    loopServer();
-  } else {
-    clientLoop();
-  }
+  // Note: Old BLE server/client loops removed (BLE_ENABLED=false)
 
   // Update managers
   displayMgr.refresh();

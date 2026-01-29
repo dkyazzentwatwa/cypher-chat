@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Config.h"
+#include "Config_Starbeam.h"
 #include "StateManager.h"
 
 // Display screens

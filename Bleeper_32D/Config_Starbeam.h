@@ -87,6 +87,18 @@ extern const char* BUTTON_LABELS[];
 #define LED_STATUS_PIN  LED3_PIN
 #define LED_ALARM_PIN   LED4_PIN
 
+// RGB LED pins (for LEDManager color control)
+#define LED_PIN_R       LED1_PIN  // Red channel
+#define LED_PIN_G       LED3_PIN  // Green channel
+#define LED_PIN_B       LED4_PIN  // Blue channel
+
+// LED PWM configuration
+#define LED_PWM_FREQ    5000      // 5kHz PWM frequency
+#define LED_PWM_RES     8         // 8-bit resolution (0-255)
+
+// -- BUZZER --
+#define BUZZER_PIN      -1        // Buzzer disabled (-1 = no buzzer)
+
 // -- SERIAL COMMUNICATION --
 #define UART_RXD 3
 #define UART_TXD 1
@@ -115,7 +127,10 @@ extern const char* BUTTON_LABELS[];
 #define BLE_ENABLED false 
 
 // -- GPS Support (Optional) --
-#define GPS_ENABLED false         
+#define GPS_ENABLED false
+#define GPS_RX_PIN 16            // GPS TX -> ESP32 RX
+#define GPS_TX_PIN 17            // GPS RX -> ESP32 TX
+#define GPS_BAUD 9600            // Standard GPS baud rate
 
 // -- SHARED UTILITIES & OBJECTS --
 void addToHistory(const char* msg);

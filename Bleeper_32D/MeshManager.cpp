@@ -1,6 +1,6 @@
 #include "MeshManager.h"
 #include "MessageAuth.h"
-#include "Config.h"
+#include "Config_Starbeam.h"
 #include "OutputManager.h"
 #include <cstring>
 #include <algorithm>

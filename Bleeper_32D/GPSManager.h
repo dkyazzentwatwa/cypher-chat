@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include "Config.h"
+#include "Config_Starbeam.h"
 #include "MeshManager.h"
 
 /**

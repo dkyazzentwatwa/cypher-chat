@@ -125,7 +125,7 @@ size_t BLEUARTManager::write(const uint8_t* buffer, size_t size) {
   }
 
   // BLE has a max packet size, send in chunks if needed
-  const size_t MAX_CHUNK = 20;  // Conservative for older iPhones
+  const size_t MAX_CHUNK = 64;  // Balanced for compatibility and performance
   size_t sent = 0;
 
   while (sent < size) {

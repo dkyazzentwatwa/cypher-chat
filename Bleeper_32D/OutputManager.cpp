@@ -33,9 +33,12 @@ size_t OutputManager::print(const char* str) {
   // Write to Bluetooth Serial (strip ANSI codes for better mobile compatibility)
 #if BLE_UART_ENABLED
   if (_btEnabled && bleUARTMgr.isConnected()) {
-    // Simple ANSI filter: skip escape sequences
+    // Build buffer with ANSI codes stripped, then send in one batch
+    char bleBuffer[256];
+    size_t bleLen = 0;
+
     const char* p = str;
-    while (*p) {
+    while (*p && bleLen < sizeof(bleBuffer) - 1) {
       if (*p == '\033' || *p == '\x1b') {  // ESC character
         // Skip until we find a letter (end of ANSI sequence)
         p++;
@@ -43,8 +46,13 @@ size_t OutputManager::print(const char* str) {
         while (*p && !isalpha(*p)) p++;
         if (*p) p++;  // Skip the final letter
       } else {
-        bleUARTMgr.write(*p++);
+        bleBuffer[bleLen++] = *p++;
       }
+    }
+
+    // Send the entire buffer in one bulk write
+    if (bleLen > 0) {
+      bleUARTMgr.write((const uint8_t*)bleBuffer, bleLen);
     }
   }
 #endif
@@ -116,11 +124,19 @@ size_t OutputManager::print(const __FlashStringHelper* f) {
   if (_usbEnabled) Serial.print(f);
 #if BLE_UART_ENABLED
   if (_btEnabled && bleUARTMgr.isConnected()) {
-    // For flash strings, read and send
+    // Build buffer from flash string, then send in one batch
+    char bleBuffer[256];
+    size_t bleLen = 0;
+
     PGM_P p = reinterpret_cast<PGM_P>(f);
     char c;
-    while ((c = pgm_read_byte(p++)) != 0) {
-      bleUARTMgr.write(c);
+    while ((c = pgm_read_byte(p++)) != 0 && bleLen < sizeof(bleBuffer) - 1) {
+      bleBuffer[bleLen++] = c;
+    }
+
+    // Send the entire buffer in one bulk write
+    if (bleLen > 0) {
+      bleUARTMgr.write((const uint8_t*)bleBuffer, bleLen);
     }
   }
 #endif
