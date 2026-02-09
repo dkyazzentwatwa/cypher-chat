@@ -11,6 +11,11 @@
 #include "TerminalManager.h"
 #include "MeshManager.h"
 #include "GPSManager.h"
+#include "PowerManager.h"
+#include "SecurityManager.h"
+#include "FileSystemManager.h"
+#include "TimeManager.h"
+#include "LogManager.h"
 
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET_PIN);
 unsigned long lastButtonPressMillis = 0;
@@ -453,6 +458,13 @@ void setup() {
   buttonMgr.begin();
   ledMgr.begin();
   buzzerMgr.begin();
+
+  // Initialize new managers
+  powerMgr.begin();
+  securityMgr.begin();
+  fileSystemMgr.begin();
+  timeMgr.begin();
+  logMgr.begin();
 
   detectRole();
   configurePasskey();

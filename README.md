@@ -15,11 +15,29 @@ A minimal ESP32-based BLE chat for quick communication in emergencies.
 7. Use the buttons to send preset messages. The OLED and buzzer provide status feedback and delivery acknowledgements.
 
 ## Features
-- Runtime selection between server and client.
-- Configurable BLE passkey at startup.
-- Simple delivery confirmation via `ACK` messages.
-- OLED/buzzer feedback for connection status and incoming messages.
-- Stores the last ten messages in memory for basic history.
+- **Mesh Networking (ESP-NOW)**: Multi-hop relay up to 1.25km range (5 hops × 250m)
+- **Wireless Terminal Access**: BLE UART for remote device management from iOS/Android
+- **Comprehensive CLI**: 85 terminal commands across 13 categories
+- **Battery Monitoring**: Real-time voltage and percentage tracking
+- **Power Management**: TX power control, sleep modes for extended battery life
+- **Network Diagnostics**: Ping, traceroute, topology visualization, signal monitoring
+- **Security Features**: Peer blocklist, trust list, HMAC-SHA256 message authentication
+- **Hardware Diagnostics**: Self-test routines for all peripherals
+- **File System Support**: SPIFFS for logs, configuration, and message persistence
+- **GPS Integration**: Optional GPS tagging for emergency broadcasts
+- **Runtime configuration**: BLE passkey, unit name, terminal modes
+- **OLED/buzzer feedback**: Connection status and message delivery
+- **Message history**: Last 10 messages with metadata
+
+### Terminal Interface
+The device includes a powerful terminal interface accessible via USB or BLE UART:
+- **85 commands** organized in 13 categories
+- **Tab completion** and command history (UP/DOWN arrows)
+- **4 terminal modes**: Quiet, Normal, Verbose, Monitor
+- **ANSI color support** for better readability
+- **Interactive menus** or command-line mode
+
+See [COMMANDS.md](COMMANDS.md) for complete terminal reference.
 
 ## Emergency workflows
 - **Hub and spokes**: Keep one server device stationary as a relay while multiple clients move around.

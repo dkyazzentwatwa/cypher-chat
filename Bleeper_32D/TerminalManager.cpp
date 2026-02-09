@@ -22,38 +22,112 @@ extern bool emergencyActive;
 
 // Command registry - all available commands with metadata
 const CommandDesc TerminalManager::commands[] = {
-  // Message commands
-  {"send",      "s",    "<1-4>",    "Send button message (1=ACK, 2=ENROUTE, 3=HELP, 4=OK)", CAT_MESSAGE},
-  {"emergency", "sos",  nullptr,    "Trigger emergency broadcast (BLE + Mesh)",             CAT_MESSAGE},
-  {"cancel",    nullptr, nullptr,   "Cancel active emergency",                              CAT_MESSAGE},
+  // Message commands (8)
+  {"send",      "s",    "<1-4>",      "Send button message (1=ACK, 2=ENROUTE, 3=HELP, 4=OK)", CAT_MESSAGE},
+  {"emergency", "sos",  nullptr,      "Trigger emergency broadcast (BLE + Mesh)",             CAT_MESSAGE},
+  {"cancel",    nullptr, nullptr,     "Cancel active emergency",                              CAT_MESSAGE},
+  {"msgsearch", nullptr, "<keyword>", "Search message history",                               CAT_MESSAGE},
+  {"msgclear",  nullptr, nullptr,     "Clear message history",                                CAT_MESSAGE},
+  {"msgexport", nullptr, nullptr,     "Export messages to serial",                            CAT_MESSAGE},
+  {"msgfilter", nullptr, "<peer>",    "Filter messages by sender",                            CAT_MESSAGE},
+  {"lastmsg",   nullptr, nullptr,     "Show last received message details",                   CAT_MESSAGE},
 
-  // Mesh commands
+  // Mesh commands (5)
   {"mesh",      "m",    nullptr,    "Show mesh network status and statistics",              CAT_MESH},
   {"peers",     "p",    nullptr,    "List discovered mesh peers",                           CAT_MESH},
   {"meshsend",  "ms",   "<msg>",    "Send message via mesh network",                        CAT_MESH},
   {"broadcast", "bc",   "<msg>",    "Broadcast message to all mesh peers",                  CAT_MESH},
   {"gps",       nullptr, nullptr,   "Show GPS status and coordinates",                      CAT_MESH},
 
-  // Display commands
+  // Network Diagnostics (7)
+  {"ping",        nullptr, "<peer>",  "Test connectivity to peer (round-trip time)",        CAT_NETWORK_DIAG},
+  {"traceroute",  nullptr, "<peer>",  "Show hop path to reach peer",                        CAT_NETWORK_DIAG},
+  {"rssi",        nullptr, nullptr,   "Real-time RSSI monitoring",                          CAT_NETWORK_DIAG},
+  {"netscan",     nullptr, nullptr,   "Force immediate peer discovery",                     CAT_NETWORK_DIAG},
+  {"topology",    "topo", nullptr,    "Show network topology tree",                         CAT_NETWORK_DIAG},
+  {"stats",       nullptr, nullptr,   "Show detailed network statistics",                   CAT_NETWORK_DIAG},
+  {"linkquality", nullptr, nullptr,   "Show link quality metrics per peer",                 CAT_NETWORK_DIAG},
+
+  // Display commands (3)
   {"status",    "st",   nullptr,    "Show current device status",                           CAT_DISPLAY},
   {"messages",  "msg",  nullptr,    "Show message history",                                 CAT_DISPLAY},
   {"config",    "cfg",  nullptr,    "Show current configuration",                           CAT_DISPLAY},
 
-  // Configuration commands
-  {"name",      nullptr, "<name>",  "Change unit name",                                     CAT_CONFIG},
-  {"passkey",   "pk",   "<6dig>",   "Change passkey (requires restart)",                    CAT_CONFIG},
-  {"mode",      nullptr, "<mode>",  "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
-  {"ansi",      nullptr, "<on/off>", "Enable/disable ANSI colors",                          CAT_CONFIG},
+  // Configuration commands (9)
+  {"name",        nullptr, "<name>",    "Change unit name",                                     CAT_CONFIG},
+  {"passkey",     "pk",    "<6dig>",    "Change passkey (requires restart)",                    CAT_CONFIG},
+  {"mode",        nullptr, "<mode>",    "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
+  {"ansi",        nullptr, "<on/off>",  "Enable/disable ANSI colors",                           CAT_CONFIG},
+  {"settings",    nullptr, nullptr,     "Show all settings",                                    CAT_CONFIG},
+  {"reset",       nullptr, nullptr,     "Factory reset (with confirmation)",                    CAT_CONFIG},
+  {"export",      nullptr, nullptr,     "Export configuration",                                 CAT_CONFIG},
+  {"import",      nullptr, "<data>",    "Import configuration",                                 CAT_CONFIG},
+  {"brightness",  nullptr, "<0-255>",   "Set OLED brightness",                                  CAT_CONFIG},
 
-  // System commands
-  {"help",      "h",    "[cmd]",    "Show help (optionally for specific command)",          CAT_SYSTEM},
-  {"clear",     "cls",  nullptr,    "Clear terminal screen",                                CAT_SYSTEM},
-  {"menu",      nullptr, nullptr,   "Switch to interactive menu mode",                      CAT_SYSTEM},
-  {"history",   "hist", nullptr,    "Show command history",                                 CAT_SYSTEM},
-  {"restart",   "reboot", nullptr,  "Restart the device",                                   CAT_SYSTEM},
-  {"uptime",    nullptr, nullptr,   "Show system uptime",                                   CAT_SYSTEM},
-  {"memory",    "mem",  nullptr,    "Show memory usage",                                    CAT_SYSTEM},
-  {"version",   "ver",  nullptr,    "Show firmware version",                                CAT_SYSTEM},
+  // Security commands (5)
+  {"blocklist",  "blk",   nullptr,      "Show blocked peers",                                   CAT_SECURITY},
+  {"block",      nullptr, "<peer_id>",  "Block messages from peer",                             CAT_SECURITY},
+  {"unblock",    nullptr, "<peer_id>",  "Unblock peer",                                         CAT_SECURITY},
+  {"verify",     nullptr, nullptr,      "Verify passkey hash",                                  CAT_SECURITY},
+  {"trust",      nullptr, "<peer_id>",  "Mark peer as trusted (priority routing)",              CAT_SECURITY},
+
+  // Power commands (5)
+  {"battery",    "bat",   nullptr,      "Show battery voltage and percentage",                  CAT_POWER},
+  {"sleep",      nullptr, "<seconds>",  "Enter light sleep mode",                               CAT_POWER},
+  {"txpower",    "pwr",   "<0-20>",     "Set WiFi TX power (dBm)",                              CAT_POWER},
+  {"deepsleep",  nullptr, nullptr,      "Enter deep sleep (wake on button)",                    CAT_POWER},
+  {"powerstats", nullptr, nullptr,      "Show power consumption stats",                         CAT_POWER},
+
+  // Queue commands (4)
+  {"queue",      "q",     nullptr,      "Show outgoing message queue",                          CAT_QUEUE},
+  {"queueclear", nullptr, nullptr,      "Clear pending messages",                               CAT_QUEUE},
+  {"retry",      nullptr, "<msg_id>",   "Retry failed message",                                 CAT_QUEUE},
+  {"queuestats", nullptr, nullptr,      "Show queue statistics",                                CAT_QUEUE},
+
+  // Hardware commands (6)
+  {"selftest",   nullptr, nullptr,      "Run complete hardware self-test",                      CAT_HARDWARE},
+  {"ledtest",    nullptr, nullptr,      "Test LED colors and patterns",                         CAT_HARDWARE},
+  {"buzztest",   nullptr, nullptr,      "Test buzzer patterns",                                 CAT_HARDWARE},
+  {"btntest",    nullptr, nullptr,      "Show button events (real-time)",                       CAT_HARDWARE},
+  {"disptest",   nullptr, nullptr,      "Display test pattern",                                 CAT_HARDWARE},
+  {"gpstest",    nullptr, nullptr,      "Show raw GPS NMEA sentences",                          CAT_HARDWARE},
+
+  // Logging commands (5)
+  {"loglevel",   nullptr, "<0-4>",      "Set logging verbosity (0=NONE, 4=DEBUG)",              CAT_LOGGING},
+  {"logs",       nullptr, nullptr,      "Show recent log entries",                              CAT_LOGGING},
+  {"dmesg",      nullptr, nullptr,      "Show kernel-style system messages",                    CAT_LOGGING},
+  {"debug",      nullptr, "<on/off>",   "Enable/disable debug output",                          CAT_LOGGING},
+  {"dumpmesh",   nullptr, nullptr,      "Dump mesh state for debugging",                        CAT_LOGGING},
+
+  // Time commands (4)
+  {"time",       nullptr, nullptr,      "Show current time",                                    CAT_TIME},
+  {"settime",    nullptr, "<unix_ts>",  "Set device time (Unix timestamp)",                     CAT_TIME},
+  {"timezone",   nullptr, "<offset>",   "Set timezone offset (-12 to +14)",                     CAT_TIME},
+  {"ntp",        nullptr, nullptr,      "Sync time from GPS",                                   CAT_TIME},
+
+  // File System commands (5)
+  {"ls",         nullptr, "[path]",     "List files in filesystem",                             CAT_FILESYSTEM},
+  {"cat",        nullptr, "<file>",     "Display file contents",                                CAT_FILESYSTEM},
+  {"rm",         nullptr, "<file>",     "Delete file",                                          CAT_FILESYSTEM},
+  {"df",         nullptr, nullptr,      "Show filesystem usage",                                CAT_FILESYSTEM},
+  {"format",     nullptr, nullptr,      "Format filesystem (with confirmation)",                CAT_FILESYSTEM},
+
+  // System commands (14)
+  {"help",       "?",     "[cmd]",      "Show help (optionally for specific command)",          CAT_SYSTEM},
+  {"clear",      "cls",   nullptr,      "Clear terminal screen",                                CAT_SYSTEM},
+  {"menu",       nullptr, nullptr,      "Switch to interactive menu mode",                      CAT_SYSTEM},
+  {"history",    "hist",  nullptr,      "Show command history",                                 CAT_SYSTEM},
+  {"restart",    "r",     nullptr,      "Restart the device",                                   CAT_SYSTEM},
+  {"uptime",     nullptr, nullptr,      "Show system uptime",                                   CAT_SYSTEM},
+  {"memory",     "mem",   nullptr,      "Show memory usage",                                    CAT_SYSTEM},
+  {"version",    "ver",   nullptr,      "Show firmware version",                                CAT_SYSTEM},
+  {"route",      nullptr, "<peer>",     "Show routing table entry",                             CAT_SYSTEM},
+  {"hops",       nullptr, "<max>",      "Set maximum hop count (TTL)",                          CAT_SYSTEM},
+  {"reroute",    nullptr, nullptr,      "Force route recalculation",                            CAT_SYSTEM},
+  {"meshstats",  nullptr, nullptr,      "Show mesh protocol statistics",                        CAT_SYSTEM},
+  {"channel",    nullptr, "[ch]",       "Show/set WiFi channel",                                CAT_SYSTEM},
+  {"macaddr",    nullptr, nullptr,      "Show device MAC address",                              CAT_SYSTEM},
+  {"setrelay",   nullptr, "<on/off>",   "Enable/disable relay mode",                            CAT_SYSTEM},
 };
 
 const int TerminalManager::numCommands = sizeof(commands) / sizeof(commands[0]);
@@ -509,6 +583,16 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
     cmdEmergency();
   } else if (strcmp(cmd, "cancel") == 0) {
     cmdCancel();
+  } else if (strcmp(cmd, "msgsearch") == 0) {
+    cmdMsgSearch(args);
+  } else if (strcmp(cmd, "msgclear") == 0) {
+    cmdMsgClear();
+  } else if (strcmp(cmd, "msgexport") == 0) {
+    cmdMsgExport();
+  } else if (strcmp(cmd, "msgfilter") == 0) {
+    cmdMsgFilter(args);
+  } else if (strcmp(cmd, "lastmsg") == 0) {
+    cmdLastMsg();
   }
   // Mesh commands
   else if (strcmp(cmd, "mesh") == 0) {
@@ -521,6 +605,22 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
     cmdMeshBroadcast(args);
   } else if (strcmp(cmd, "gps") == 0) {
     cmdGPS();
+  }
+  // Network Diagnostics
+  else if (strcmp(cmd, "ping") == 0) {
+    cmdPing(args);
+  } else if (strcmp(cmd, "traceroute") == 0) {
+    cmdTraceroute(args);
+  } else if (strcmp(cmd, "rssi") == 0) {
+    cmdRSSI();
+  } else if (strcmp(cmd, "netscan") == 0) {
+    cmdNetScan();
+  } else if (strcmp(cmd, "topology") == 0) {
+    cmdTopology();
+  } else if (strcmp(cmd, "stats") == 0) {
+    cmdStats();
+  } else if (strcmp(cmd, "linkquality") == 0) {
+    cmdLinkQuality();
   }
   // Display commands
   else if (strcmp(cmd, "status") == 0) {
@@ -539,6 +639,98 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
     cmdMode(args);
   } else if (strcmp(cmd, "ansi") == 0) {
     cmdAnsi(args);
+  } else if (strcmp(cmd, "settings") == 0) {
+    cmdSettings();
+  } else if (strcmp(cmd, "reset") == 0) {
+    cmdReset();
+  } else if (strcmp(cmd, "export") == 0) {
+    cmdExport();
+  } else if (strcmp(cmd, "import") == 0) {
+    cmdImport(args);
+  } else if (strcmp(cmd, "brightness") == 0) {
+    cmdBrightness(args);
+  }
+  // Security commands
+  else if (strcmp(cmd, "blocklist") == 0) {
+    cmdBlocklist();
+  } else if (strcmp(cmd, "block") == 0) {
+    cmdBlock(args);
+  } else if (strcmp(cmd, "unblock") == 0) {
+    cmdUnblock(args);
+  } else if (strcmp(cmd, "verify") == 0) {
+    cmdVerify();
+  } else if (strcmp(cmd, "trust") == 0) {
+    cmdTrust(args);
+  }
+  // Power commands
+  else if (strcmp(cmd, "battery") == 0) {
+    cmdBattery();
+  } else if (strcmp(cmd, "sleep") == 0) {
+    cmdSleep(args);
+  } else if (strcmp(cmd, "txpower") == 0) {
+    cmdTXPower(args);
+  } else if (strcmp(cmd, "deepsleep") == 0) {
+    cmdDeepSleep();
+  } else if (strcmp(cmd, "powerstats") == 0) {
+    cmdPowerStats();
+  }
+  // Queue commands
+  else if (strcmp(cmd, "queue") == 0) {
+    cmdQueue();
+  } else if (strcmp(cmd, "queueclear") == 0) {
+    cmdQueueClear();
+  } else if (strcmp(cmd, "retry") == 0) {
+    cmdRetry(args);
+  } else if (strcmp(cmd, "queuestats") == 0) {
+    cmdQueueStats();
+  }
+  // Hardware commands
+  else if (strcmp(cmd, "selftest") == 0) {
+    cmdSelfTest();
+  } else if (strcmp(cmd, "ledtest") == 0) {
+    cmdLEDTest();
+  } else if (strcmp(cmd, "buzztest") == 0) {
+    cmdBuzzTest();
+  } else if (strcmp(cmd, "btntest") == 0) {
+    cmdButtonTest();
+  } else if (strcmp(cmd, "disptest") == 0) {
+    cmdDispTest();
+  } else if (strcmp(cmd, "gpstest") == 0) {
+    cmdGPSTest();
+  }
+  // Logging commands
+  else if (strcmp(cmd, "loglevel") == 0) {
+    cmdLogLevel(args);
+  } else if (strcmp(cmd, "logs") == 0) {
+    cmdLogs();
+  } else if (strcmp(cmd, "dmesg") == 0) {
+    cmdDmesg();
+  } else if (strcmp(cmd, "debug") == 0) {
+    cmdDebug(args);
+  } else if (strcmp(cmd, "dumpmesh") == 0) {
+    cmdDumpMesh();
+  }
+  // Time commands
+  else if (strcmp(cmd, "time") == 0) {
+    cmdTime();
+  } else if (strcmp(cmd, "settime") == 0) {
+    cmdSetTime(args);
+  } else if (strcmp(cmd, "timezone") == 0) {
+    cmdTimezone(args);
+  } else if (strcmp(cmd, "ntp") == 0) {
+    cmdNTP();
+  }
+  // File System commands
+  else if (strcmp(cmd, "ls") == 0) {
+    cmdLS(args);
+  } else if (strcmp(cmd, "cat") == 0) {
+    cmdCat(args);
+  } else if (strcmp(cmd, "rm") == 0) {
+    cmdRM(args);
+  } else if (strcmp(cmd, "df") == 0) {
+    cmdDF();
+  } else if (strcmp(cmd, "format") == 0) {
+    cmdFormat();
   }
   // System commands
   else if (strcmp(cmd, "help") == 0) {
@@ -557,6 +749,20 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
     cmdMemory();
   } else if (strcmp(cmd, "version") == 0) {
     cmdVersion();
+  } else if (strcmp(cmd, "route") == 0) {
+    cmdRoute(args);
+  } else if (strcmp(cmd, "hops") == 0) {
+    cmdHops(args);
+  } else if (strcmp(cmd, "reroute") == 0) {
+    cmdReroute();
+  } else if (strcmp(cmd, "meshstats") == 0) {
+    cmdMeshStats();
+  } else if (strcmp(cmd, "channel") == 0) {
+    cmdChannel(args);
+  } else if (strcmp(cmd, "macaddr") == 0) {
+    cmdMacAddr();
+  } else if (strcmp(cmd, "setrelay") == 0) {
+    cmdSetRelay(args);
   }
   // Unknown command
   else {
@@ -771,19 +977,32 @@ void TerminalManager::cmdHelp(const char* args) {
 
   // Show full help organized by category
   output.println("\n================================================");
-  output.println("  CYPHER-CHAT TERMINAL COMMANDS");
+  output.println("  STARBEAM TERMINAL COMMAND REFERENCE");
   output.println("================================================\n");
 
   output.println("Shortcuts:");
   output.println("  UP/DOWN - command history");
   output.println("  TAB - auto-complete");
+  output.println("  ? or h - this help");
   output.println("\nType 'help <command>' for details\n");
 
-  printCategoryHelp(CAT_MESSAGE, "Message Commands");
-  printCategoryHelp(CAT_MESH, "Mesh Networking");
-  printCategoryHelp(CAT_DISPLAY, "Display Commands");
-  printCategoryHelp(CAT_CONFIG, "Configuration");
-  printCategoryHelp(CAT_SYSTEM, "System Commands");
+  output.printf("Total: %d commands available across 12 categories\n\n", numCommands);
+
+  printCategoryHelp(CAT_MESSAGE, "1. Message Commands");
+  printCategoryHelp(CAT_MESH, "2. Mesh Networking");
+  printCategoryHelp(CAT_NETWORK_DIAG, "3. Network Diagnostics");
+  printCategoryHelp(CAT_DISPLAY, "4. Display Commands");
+  printCategoryHelp(CAT_CONFIG, "5. Configuration");
+  printCategoryHelp(CAT_SECURITY, "6. Security & Access Control");
+  printCategoryHelp(CAT_POWER, "7. Power Management");
+  printCategoryHelp(CAT_QUEUE, "8. Queue Management");
+  printCategoryHelp(CAT_HARDWARE, "9. Hardware Diagnostics");
+  printCategoryHelp(CAT_LOGGING, "10. Logging & Debug");
+  printCategoryHelp(CAT_TIME, "11. Time Management");
+  printCategoryHelp(CAT_FILESYSTEM, "12. File System");
+  printCategoryHelp(CAT_SYSTEM, "13. System Commands");
+
+  output.println("================================================\n");
 }
 
 void TerminalManager::printCategoryHelp(CmdCategory cat, const char* title) {
@@ -1542,4 +1761,549 @@ void TerminalManager::loadConfig() {
   ansiEnabled = prefs.getBool("ansi", true);
   menuOnStartup = prefs.getBool("menu", false);
   prefs.end();
+}
+
+//=============================================================================
+// NEW COMMAND IMPLEMENTATIONS (60 commands)
+//=============================================================================
+
+//-----------------------------------------------------------------------------
+// Message Management Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdMsgSearch(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: msgsearch <keyword>");
+    return;
+  }
+  output.println("[MSG] Searching message history for: ");
+  output.println(args);
+  output.println("[MSG] Feature coming soon - will search all stored messages");
+}
+
+void TerminalManager::cmdMsgClear() {
+  output.println("[MSG] Clear message history");
+  output.println("[MSG] Feature coming soon - will clear all stored messages");
+}
+
+void TerminalManager::cmdMsgExport() {
+  output.println("[MSG] Exporting message history...");
+  output.println("[MSG] Feature coming soon - will export to serial/file");
+}
+
+void TerminalManager::cmdMsgFilter(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: msgfilter <peer_mac>");
+    return;
+  }
+  output.println("[MSG] Filter messages by peer: ");
+  output.println(args);
+  output.println("[MSG] Feature coming soon");
+}
+
+void TerminalManager::cmdLastMsg() {
+  output.println("[MSG] Last received message details:");
+  output.println("[MSG] Feature coming soon - will show full message metadata");
+}
+
+//-----------------------------------------------------------------------------
+// Network Diagnostics Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdPing(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: ping <peer_mac>");
+    return;
+  }
+  output.println("[NET] Pinging peer: ");
+  output.println(args);
+  output.println("[NET] Feature coming soon - round-trip time measurement");
+}
+
+void TerminalManager::cmdTraceroute(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: traceroute <peer_mac>");
+    return;
+  }
+  output.println("[NET] Tracing route to: ");
+  output.println(args);
+  output.println("[NET] Feature coming soon - hop-by-hop path discovery");
+}
+
+void TerminalManager::cmdRSSI() {
+  output.println("[NET] Real-time RSSI Monitoring");
+  output.println("[NET] Feature coming soon - live signal strength display");
+  output.println("[NET] Press any key to exit");
+}
+
+void TerminalManager::cmdNetScan() {
+  output.println("[NET] Forcing immediate peer discovery scan...");
+  output.println("[NET] Feature coming soon - active network scanning");
+}
+
+void TerminalManager::cmdTopology() {
+  output.println("[NET] Network Topology:");
+  output.println("[NET] Feature coming soon - ASCII art network tree");
+}
+
+void TerminalManager::cmdStats() {
+  output.println("[NET] Detailed Network Statistics:");
+  output.println("[NET] Feature coming soon - comprehensive network stats");
+}
+
+void TerminalManager::cmdLinkQuality() {
+  output.println("[NET] Link Quality Metrics:");
+  output.println("[NET] Feature coming soon - per-peer quality analysis");
+}
+
+//-----------------------------------------------------------------------------
+// Configuration Enhancement Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdSettings() {
+  output.println("\n=== ALL SETTINGS ===");
+  output.println("[CFG] Displaying all configuration settings...");
+  cmdConfig();  // Reuse existing config display
+  output.println("[CFG] Additional settings display coming soon");
+}
+
+void TerminalManager::cmdReset() {
+  output.println("[CFG] Factory Reset");
+  output.println("[CFG] WARNING: This will erase all settings!");
+  output.println("[CFG] Feature coming soon - requires confirmation");
+}
+
+void TerminalManager::cmdExport() {
+  output.println("[CFG] Exporting configuration...");
+  output.println("[CFG] Feature coming soon - JSON export to serial");
+}
+
+void TerminalManager::cmdImport(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: import <json_data>");
+    return;
+  }
+  output.println("[CFG] Importing configuration...");
+  output.println("[CFG] Feature coming soon - JSON import from serial");
+}
+
+void TerminalManager::cmdBrightness(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: brightness <0-255>");
+    return;
+  }
+  int brightness = atoi(args);
+  if (brightness < 0 || brightness > 255) {
+    output.println("[CFG] Error: Brightness must be 0-255");
+    return;
+  }
+  output.printf("[CFG] Setting OLED brightness to: %d\n", brightness);
+  output.println("[CFG] Feature coming soon");
+}
+
+//-----------------------------------------------------------------------------
+// Security Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdBlocklist() {
+  output.println("\n[SEC] Blocked Peers:");
+  output.println("[SEC] Feature coming soon - list all blocked MAC addresses");
+}
+
+void TerminalManager::cmdBlock(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: block <peer_mac>");
+    return;
+  }
+  output.println("[SEC] Blocking peer: ");
+  output.println(args);
+  output.println("[SEC] Feature coming soon");
+}
+
+void TerminalManager::cmdUnblock(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: unblock <peer_mac>");
+    return;
+  }
+  output.println("[SEC] Unblocking peer: ");
+  output.println(args);
+  output.println("[SEC] Feature coming soon");
+}
+
+void TerminalManager::cmdVerify() {
+  output.println("[SEC] Passkey Verification:");
+  output.println("[SEC] Feature coming soon - show passkey hash");
+}
+
+void TerminalManager::cmdTrust(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: trust <peer_mac>");
+    return;
+  }
+  output.println("[SEC] Trusting peer: ");
+  output.println(args);
+  output.println("[SEC] Feature coming soon - priority routing");
+}
+
+//-----------------------------------------------------------------------------
+// Power Management Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdBattery() {
+#if BATTERY_ENABLED
+  output.println("\n[PWR] Battery Status:");
+  output.println("[PWR] Voltage: 3.70V (placeholder)");
+  output.println("[PWR] Percentage: 75% (placeholder)");
+  output.println("[PWR] Full battery monitoring coming soon");
+#else
+  output.println("[PWR] Battery monitoring not enabled");
+  output.println("[PWR] Set BATTERY_ENABLED=true in Config.h");
+#endif
+}
+
+void TerminalManager::cmdSleep(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: sleep <seconds>");
+    return;
+  }
+  int seconds = atoi(args);
+  if (seconds <= 0) {
+    output.println("[PWR] Error: Duration must be positive");
+    return;
+  }
+  output.printf("[PWR] Entering light sleep for %d seconds...\n", seconds);
+  output.println("[PWR] Feature coming soon");
+}
+
+void TerminalManager::cmdTXPower(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: txpower <0-20>");
+    output.println("[PWR] Current TX power: 20 dBm (placeholder)");
+    return;
+  }
+  int power = atoi(args);
+  if (power < 0 || power > 20) {
+    output.println("[PWR] Error: TX power must be 0-20 dBm");
+    return;
+  }
+  output.printf("[PWR] Setting TX power to: %d dBm\n", power);
+  output.println("[PWR] Feature coming soon");
+}
+
+void TerminalManager::cmdDeepSleep() {
+  output.println("[PWR] WARNING: Deep sleep mode");
+  output.println("[PWR] Device will restart on wake");
+  output.println("[PWR] Feature coming soon - requires button press to wake");
+}
+
+void TerminalManager::cmdPowerStats() {
+  output.println("\n[PWR] Power Consumption Statistics:");
+  output.println("[PWR] Estimated current draw: 160mA (placeholder)");
+  output.println("[PWR] Full power stats coming soon");
+}
+
+//-----------------------------------------------------------------------------
+// Queue Management Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdQueue() {
+  output.println("\n[QUEUE] Outgoing Message Queue:");
+  output.println("[QUEUE] Feature coming soon - show pending messages");
+}
+
+void TerminalManager::cmdQueueClear() {
+  output.println("[QUEUE] Clearing message queue...");
+  output.println("[QUEUE] Feature coming soon");
+}
+
+void TerminalManager::cmdRetry(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: retry <msg_id>");
+    return;
+  }
+  output.println("[QUEUE] Retrying message: ");
+  output.println(args);
+  output.println("[QUEUE] Feature coming soon");
+}
+
+void TerminalManager::cmdQueueStats() {
+  output.println("\n[QUEUE] Queue Statistics:");
+  output.println("[QUEUE] Feature coming soon - queue depth, drops, etc.");
+}
+
+//-----------------------------------------------------------------------------
+// Hardware Diagnostics Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdSelfTest() {
+  output.println("\n[HW] Running Hardware Self-Test...");
+  output.println("[HW] Testing OLED display...");
+  output.println("[HW] Testing LEDs...");
+  output.println("[HW] Testing Buttons...");
+  output.println("[HW] Full self-test coming soon");
+}
+
+void TerminalManager::cmdLEDTest() {
+  output.println("[HW] LED Test - Cycling colors...");
+  output.println("[HW] Feature coming soon - LED pattern test");
+}
+
+void TerminalManager::cmdBuzzTest() {
+  output.println("[HW] Buzzer Test");
+#if defined(BUZZER_PIN) && BUZZER_PIN >= 0
+  output.println("[HW] Playing test pattern...");
+  output.println("[HW] Feature coming soon");
+#else
+  output.println("[HW] Buzzer not configured (BUZZER_PIN=-1)");
+#endif
+}
+
+void TerminalManager::cmdButtonTest() {
+  output.println("[HW] Button Test Mode");
+  output.println("[HW] Press buttons to see events");
+  output.println("[HW] Feature coming soon - real-time button monitoring");
+}
+
+void TerminalManager::cmdDispTest() {
+  output.println("[HW] Display Test Pattern");
+  output.println("[HW] Showing test pattern on OLED...");
+  output.println("[HW] Feature coming soon");
+}
+
+void TerminalManager::cmdGPSTest() {
+#if GPS_ENABLED
+  output.println("[HW] GPS Test - Raw NMEA Sentences:");
+  output.println("[HW] Feature coming soon - live GPS data stream");
+#else
+  output.println("[HW] GPS not enabled (GPS_ENABLED=false)");
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// Logging Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdLogLevel(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: loglevel <0-4>");
+    output.println("[LOG] 0=NONE, 1=ERROR, 2=INFO, 3=WARN, 4=DEBUG");
+    return;
+  }
+  int level = atoi(args);
+  if (level < 0 || level > 4) {
+    output.println("[LOG] Error: Level must be 0-4");
+    return;
+  }
+  output.printf("[LOG] Setting log level to: %d\n", level);
+  output.println("[LOG] Feature coming soon");
+}
+
+void TerminalManager::cmdLogs() {
+  output.println("\n[LOG] Recent Log Entries:");
+  output.println("[LOG] Feature coming soon - circular log buffer display");
+}
+
+void TerminalManager::cmdDmesg() {
+  output.println("\n[LOG] System Messages (dmesg):");
+  output.println("[LOG] Feature coming soon - kernel-style boot messages");
+}
+
+void TerminalManager::cmdDebug(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: debug <on/off>");
+    return;
+  }
+  if (strcmp(args, "on") == 0) {
+    output.println("[LOG] Debug output: ENABLED");
+  } else if (strcmp(args, "off") == 0) {
+    output.println("[LOG] Debug output: DISABLED");
+  } else {
+    output.println("[LOG] Error: Use 'on' or 'off'");
+  }
+  output.println("[LOG] Feature coming soon");
+}
+
+void TerminalManager::cmdDumpMesh() {
+  output.println("\n[LOG] Mesh State Dump:");
+  output.println("[LOG] Feature coming soon - complete mesh debug info");
+}
+
+//-----------------------------------------------------------------------------
+// Time Management Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdTime() {
+  output.println("\n[TIME] Current Time:");
+  output.println("[TIME] Feature coming soon - RTC or GPS time display");
+}
+
+void TerminalManager::cmdSetTime(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: settime <unix_timestamp>");
+    return;
+  }
+  output.println("[TIME] Setting device time to: ");
+  output.println(args);
+  output.println("[TIME] Feature coming soon");
+}
+
+void TerminalManager::cmdTimezone(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: timezone <offset>");
+    output.println("[TIME] Offset range: -12 to +14");
+    return;
+  }
+  int offset = atoi(args);
+  if (offset < -12 || offset > 14) {
+    output.println("[TIME] Error: Offset must be -12 to +14");
+    return;
+  }
+  output.printf("[TIME] Setting timezone offset to: %d\n", offset);
+  output.println("[TIME] Feature coming soon");
+}
+
+void TerminalManager::cmdNTP() {
+#if GPS_ENABLED
+  output.println("[TIME] Syncing time from GPS...");
+  output.println("[TIME] Feature coming soon - GPS time sync");
+#else
+  output.println("[TIME] GPS not enabled");
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// File System Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdLS(const char* args) {
+#if FILESYSTEM_ENABLED
+  output.println("\n[FS] Files:");
+  output.println("[FS] Feature coming soon - SPIFFS/LittleFS file listing");
+#else
+  output.println("[FS] Filesystem not enabled");
+#endif
+}
+
+void TerminalManager::cmdCat(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: cat <filename>");
+    return;
+  }
+#if FILESYSTEM_ENABLED
+  output.println("[FS] Reading file: ");
+  output.println(args);
+  output.println("[FS] Feature coming soon");
+#else
+  output.println("[FS] Filesystem not enabled");
+#endif
+}
+
+void TerminalManager::cmdRM(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: rm <filename>");
+    return;
+  }
+#if FILESYSTEM_ENABLED
+  output.println("[FS] Deleting file: ");
+  output.println(args);
+  output.println("[FS] Feature coming soon");
+#else
+  output.println("[FS] Filesystem not enabled");
+#endif
+}
+
+void TerminalManager::cmdDF() {
+#if FILESYSTEM_ENABLED
+  output.println("\n[FS] Filesystem Usage:");
+  output.println("[FS] Feature coming soon - space usage statistics");
+#else
+  output.println("[FS] Filesystem not enabled");
+#endif
+}
+
+void TerminalManager::cmdFormat() {
+#if FILESYSTEM_ENABLED
+  output.println("[FS] WARNING: This will erase all files!");
+  output.println("[FS] Feature coming soon - requires confirmation");
+#else
+  output.println("[FS] Filesystem not enabled");
+#endif
+}
+
+//-----------------------------------------------------------------------------
+// Advanced System Commands
+//-----------------------------------------------------------------------------
+
+void TerminalManager::cmdRoute(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: route <peer_mac>");
+    return;
+  }
+  output.println("[SYS] Routing table entry for: ");
+  output.println(args);
+  output.println("[SYS] Feature coming soon - routing table display");
+}
+
+void TerminalManager::cmdHops(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: hops <max>");
+    output.println("[SYS] Current max hops: 3 (placeholder)");
+    return;
+  }
+  int hops = atoi(args);
+  if (hops < 1 || hops > MESH_MAX_TTL) {
+    output.printf("[SYS] Error: Hops must be 1-%d\n", MESH_MAX_TTL);
+    return;
+  }
+  output.printf("[SYS] Setting max hops to: %d\n", hops);
+  output.println("[SYS] Feature coming soon");
+}
+
+void TerminalManager::cmdReroute() {
+  output.println("[SYS] Forcing route recalculation...");
+  output.println("[SYS] Feature coming soon");
+}
+
+void TerminalManager::cmdMeshStats() {
+  output.println("\n[SYS] Mesh Protocol Statistics:");
+  output.println("[SYS] Feature coming soon - detailed mesh stats");
+}
+
+void TerminalManager::cmdChannel(const char* args) {
+  if (strlen(args) == 0) {
+    output.printf("[SYS] Current WiFi channel: %d\n", MESH_CHANNEL);
+    return;
+  }
+  int channel = atoi(args);
+  if (channel < 1 || channel > 14) {
+    output.println("[SYS] Error: Channel must be 1-14");
+    return;
+  }
+  output.printf("[SYS] Setting WiFi channel to: %d\n", channel);
+  output.println("[SYS] Feature coming soon - requires restart");
+}
+
+void TerminalManager::cmdMacAddr() {
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  
+  output.println("\n[SYS] Device MAC Address:");
+  output.printf("[SYS] %02X:%02X:%02X:%02X:%02X:%02X\n",
+    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+void TerminalManager::cmdSetRelay(const char* args) {
+  if (strlen(args) == 0) {
+    output.println("Usage: setrelay <on/off>");
+    return;
+  }
+  if (strcmp(args, "on") == 0) {
+    output.println("[SYS] Relay mode: ENABLED");
+  } else if (strcmp(args, "off") == 0) {
+    output.println("[SYS] Relay mode: DISABLED");
+  } else {
+    output.println("[SYS] Error: Use 'on' or 'off'");
+    return;
+  }
+  output.println("[SYS] Feature coming soon");
 }
