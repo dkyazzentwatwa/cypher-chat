@@ -200,6 +200,7 @@ Emergency broadcasts use TTL=5 for maximum reach
 
 - **[SETUP_GUIDE.md](docs/SETUP_GUIDE.md)** - Detailed hardware assembly and wiring
 - **[STARBEAM_HANDBOOK.md](docs/STARBEAM_HANDBOOK.md)** - User operation manual
+- **[GUIDES_INDEX.md](docs/guides/GUIDES_INDEX.md)** - Field guide, teacher pack, student guides, activist pack, and more
 - **[CLAUDE.md](CLAUDE.md)** - Developer guide and architecture reference
 - **[COMPILATION_STATUS.md](docs/development/COMPILATION_STATUS.md)** - Build status and known issues
 
