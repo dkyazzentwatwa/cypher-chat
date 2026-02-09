@@ -3,6 +3,12 @@
 #include "MeshManager.h"
 #include "GPSManager.h"
 #include "OutputManager.h"
+#include "PowerManager.h"
+#include "TimeManager.h"
+#include "FileSystemManager.h"
+#include "LogManager.h"
+#include "SecurityManager.h"
+#include "LEDManager.h"
 #if BLE_UART_ENABLED
 #include "BLEUARTManager.h"
 #endif
@@ -19,6 +25,8 @@ extern void simulateButtonPress(int buttonIndex);
 extern void broadcastEmergency();
 extern void cancelEmergency();
 extern bool emergencyActive;
+extern String messageHistory[10];
+extern int historyCount;
 
 // Command registry - all available commands with metadata
 const CommandDesc TerminalManager::commands[] = {

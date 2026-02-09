@@ -66,6 +66,7 @@ extern bool isServer;
 #define OLED_WIDTH 128
 #define OLED_HEIGHT 64
 #define OLED_RESET_PIN -1
+#define OLED_ENABLED true
 
 // -- USER INTERFACE (Buttons) --
 #define NUM_BUTTONS 3
