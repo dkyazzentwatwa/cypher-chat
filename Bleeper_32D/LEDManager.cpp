@@ -43,6 +43,30 @@ void LEDManager::flash(LEDPattern flashPat, unsigned long duration) {
   isFlashing = true;
 }
 
+void LEDManager::set(LEDColor color) {
+#if LED_ENABLED
+  switch (color) {
+    case LED_OFF:     setColor(0, 0, 0); break;
+    case LED_RED:     setColor(255, 0, 0); break;
+    case LED_GREEN:   setColor(0, 255, 0); break;
+    case LED_BLUE:    setColor(0, 0, 255); break;
+    case LED_YELLOW:  setColor(255, 255, 0); break;
+    case LED_CYAN:    setColor(0, 255, 255); break;
+    case LED_MAGENTA: setColor(255, 0, 255); break;
+    case LED_WHITE:   setColor(255, 255, 255); break;
+  }
+#endif
+}
+
+void LEDManager::flash(LEDColor color, unsigned long duration) {
+#if LED_ENABLED
+  set(color);
+  flashDuration = duration;
+  flashStartTime = millis();
+  isFlashing = true;
+#endif
+}
+
 void LEDManager::update() {
 #if LED_ENABLED
   unsigned long now = millis();

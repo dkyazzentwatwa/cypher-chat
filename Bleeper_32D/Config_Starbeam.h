@@ -66,6 +66,7 @@ extern bool isServer;
 #define OLED_WIDTH 128
 #define OLED_HEIGHT 64
 #define OLED_RESET_PIN -1
+#define OLED_ENABLED true
 
 // -- USER INTERFACE (Buttons) --
 #define NUM_BUTTONS 3
@@ -131,6 +132,41 @@ extern const char* BUTTON_LABELS[];
 #define GPS_RX_PIN 16            // GPS TX -> ESP32 RX
 #define GPS_TX_PIN 17            // GPS RX -> ESP32 TX
 #define GPS_BAUD 9600            // Standard GPS baud rate
+
+// -- BATTERY MONITORING --
+#define BATTERY_ENABLED true
+#define BATTERY_ADC_PIN 35       // ADC1_CH7 - voltage divider input
+#define BATTERY_ADC_SAMPLES 10   // Number of samples to average
+#define BATTERY_MIN_VOLTAGE 3.0  // Minimum battery voltage (empty)
+#define BATTERY_MAX_VOLTAGE 4.2  // Maximum battery voltage (full)
+#define BATTERY_DIVIDER_RATIO 2.0 // Voltage divider ratio (R1=R2=100K)
+
+// -- FILE SYSTEM (SPIFFS/LittleFS) --
+#define FILESYSTEM_ENABLED true
+#define FILESYSTEM_SIZE_MB 1.5   // Partition size
+#define FILESYSTEM_MAX_FILES 50  // Maximum file count
+
+// -- TIME MANAGEMENT --
+#define TIME_ENABLED true
+#define TIME_DEFAULT_TZ 0        // UTC offset in hours (-12 to +14)
+#define TIME_AUTO_SYNC true      // Auto-sync from GPS if available
+
+// -- LOGGING --
+#define LOG_ENABLED true
+#define LOG_BUFFER_SIZE 200      // Number of log entries to keep in RAM
+#define LOG_DEFAULT_LEVEL 2      // 0=NONE, 1=ERROR, 2=INFO, 3=WARN, 4=DEBUG
+#define LOG_TO_SERIAL true       // Echo logs to serial
+#define LOG_TO_FILE false        // Save logs to filesystem
+
+// -- SECURITY & ACCESS CONTROL --
+#define SECURITY_BLOCKLIST_SIZE 20    // Maximum blocked peers
+#define SECURITY_TRUSTLIST_SIZE 50    // Maximum trusted peers
+#define SECURITY_PERSIST_NVS true     // Save to NVS
+
+// -- POWER MANAGEMENT --
+#define POWER_MANAGEMENT_ENABLED true
+#define POWER_TX_POWER_DEFAULT 20     // WiFi TX power in dBm (0-20)
+#define POWER_SLEEP_WAKEUP_PIN KEY1_PIN // Button to wake from deep sleep
 
 // -- SHARED UTILITIES & OBJECTS --
 void addToHistory(const char* msg);

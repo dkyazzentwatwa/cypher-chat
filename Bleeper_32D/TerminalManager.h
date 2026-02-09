@@ -23,7 +23,7 @@
 // Terminal configuration
 #define TERM_HISTORY_SIZE 10      // Number of commands to remember
 #define TERM_MAX_CMD_LEN 128      // Max command length
-#define TERM_NUM_COMMANDS 25      // Total registered commands
+#define TERM_NUM_COMMANDS 85      // Total registered commands (25 original + 60 new)
 
 enum TerminalMode {
   TERM_QUIET,       // Minimal output (errors only)
@@ -43,11 +43,19 @@ enum MenuState {
 
 // Command category for help organization
 enum CmdCategory {
-  CAT_MESSAGE,      // Message sending commands
-  CAT_MESH,         // Mesh networking commands
-  CAT_DISPLAY,      // Display/status commands
-  CAT_CONFIG,       // Configuration commands
-  CAT_SYSTEM        // System commands
+  CAT_MESSAGE,       // Message sending commands
+  CAT_MESH,          // Mesh networking commands
+  CAT_NETWORK_DIAG,  // Network diagnostics & testing
+  CAT_DISPLAY,       // Display/status commands
+  CAT_CONFIG,        // Configuration commands
+  CAT_SECURITY,      // Security & access control
+  CAT_POWER,         // Power management
+  CAT_QUEUE,         // Queue management
+  CAT_HARDWARE,      // Hardware diagnostics
+  CAT_LOGGING,       // Logging & debug
+  CAT_TIME,          // Time management
+  CAT_FILESYSTEM,    // File system operations
+  CAT_SYSTEM         // System commands
 };
 
 // Command descriptor for registration
@@ -129,6 +137,11 @@ private:
   void cmdSend(const char* args);
   void cmdEmergency();
   void cmdCancel();
+  void cmdMsgSearch(const char* args);
+  void cmdMsgClear();
+  void cmdMsgExport();
+  void cmdMsgFilter(const char* args);
+  void cmdLastMsg();
 
   // Command handlers - Mesh
   void cmdMesh();
@@ -136,6 +149,15 @@ private:
   void cmdMeshSend(const char* args);
   void cmdMeshBroadcast(const char* args);
   void cmdGPS();
+
+  // Command handlers - Network Diagnostics
+  void cmdPing(const char* args);
+  void cmdTraceroute(const char* args);
+  void cmdRSSI();
+  void cmdNetScan();
+  void cmdTopology();
+  void cmdStats();
+  void cmdLinkQuality();
 
   // Command handlers - Display
   void cmdStatus();
@@ -147,6 +169,59 @@ private:
   void cmdPasskey(const char* newKey);
   void cmdMode(const char* modeStr);
   void cmdAnsi(const char* args);
+  void cmdSettings();
+  void cmdReset();
+  void cmdExport();
+  void cmdImport(const char* args);
+  void cmdBrightness(const char* args);
+
+  // Command handlers - Security
+  void cmdBlocklist();
+  void cmdBlock(const char* args);
+  void cmdUnblock(const char* args);
+  void cmdVerify();
+  void cmdTrust(const char* args);
+
+  // Command handlers - Power
+  void cmdBattery();
+  void cmdSleep(const char* args);
+  void cmdTXPower(const char* args);
+  void cmdDeepSleep();
+  void cmdPowerStats();
+
+  // Command handlers - Queue
+  void cmdQueue();
+  void cmdQueueClear();
+  void cmdRetry(const char* args);
+  void cmdQueueStats();
+
+  // Command handlers - Hardware
+  void cmdSelfTest();
+  void cmdLEDTest();
+  void cmdBuzzTest();
+  void cmdButtonTest();
+  void cmdDispTest();
+  void cmdGPSTest();
+
+  // Command handlers - Logging
+  void cmdLogLevel(const char* args);
+  void cmdLogs();
+  void cmdDmesg();
+  void cmdDebug(const char* args);
+  void cmdDumpMesh();
+
+  // Command handlers - Time
+  void cmdTime();
+  void cmdSetTime(const char* args);
+  void cmdTimezone(const char* args);
+  void cmdNTP();
+
+  // Command handlers - File System
+  void cmdLS(const char* args);
+  void cmdCat(const char* args);
+  void cmdRM(const char* args);
+  void cmdDF();
+  void cmdFormat();
 
   // Command handlers - System
   void cmdRestart();
@@ -157,6 +232,13 @@ private:
   void cmdMenu();
   void cmdHistory();
   void cmdVersion();
+  void cmdRoute(const char* args);
+  void cmdHops(const char* args);
+  void cmdReroute();
+  void cmdMeshStats();
+  void cmdChannel(const char* args);
+  void cmdMacAddr();
+  void cmdSetRelay(const char* args);
 
   // Display functions
   void displayMainMenu();

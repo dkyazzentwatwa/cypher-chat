@@ -15,6 +15,18 @@ enum LEDPattern {
   LED_ERROR           // Red solid
 };
 
+// LED color constants for direct color control
+enum LEDColor {
+  LED_OFF,
+  LED_RED,
+  LED_GREEN,
+  LED_BLUE,
+  LED_YELLOW,
+  LED_CYAN,
+  LED_MAGENTA,
+  LED_WHITE
+};
+
 // PWM channels for ESP32
 #define PWM_CHANNEL_R 0
 #define PWM_CHANNEL_G 1
@@ -30,8 +42,14 @@ public:
   // Set LED pattern based on connection state
   void setPattern(LEDPattern pattern);
 
+  // Set LED to a specific color
+  void set(LEDColor color);
+
   // Flash temporarily (for TX/RX indication)
   void flash(LEDPattern flashPattern, unsigned long duration = 200);
+
+  // Flash a specific color temporarily
+  void flash(LEDColor color, unsigned long duration = 200);
 
   // Update LED state (call from main loop)
   void update();
