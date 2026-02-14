@@ -34,6 +34,13 @@ bool BLEUARTManager::begin(const char* deviceName) {
   // Initialize NimBLE device
   NimBLEDevice::init(_deviceName);
 
+  // Enable BLE security - require PIN pairing for connections
+  NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM protection, secure connections
+  NimBLEDevice::setSecurityPasskey(123456);  // Static PIN displayed on serial at boot
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);  // Device displays PIN
+
+  Serial.println("BLE Security: PIN pairing enabled (PIN: 123456)");
+
   // Create BLE Server
   _pServer = NimBLEDevice::createServer();
   if (!_pServer) {
@@ -48,16 +55,16 @@ bool BLEUARTManager::begin(const char* deviceName) {
     return false;
   }
 
-  // Create TX Characteristic (notify to client)
+  // Create TX Characteristic (notify to client) - require encryption
   _pTxCharacteristic = _pService->createCharacteristic(
     BLE_UART_TX_CHARACTERISTIC,
-    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ_ENC
   );
 
-  // Create RX Characteristic (write from client)
+  // Create RX Characteristic (write from client) - require encryption
   _pRxCharacteristic = _pService->createCharacteristic(
     BLE_UART_RX_CHARACTERISTIC,
-    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_ENC
   );
 
   _pRxCharacteristic->setCallbacks(new RxCallbacks(this));

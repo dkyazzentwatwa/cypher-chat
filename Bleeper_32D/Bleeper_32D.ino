@@ -1,5 +1,5 @@
 #include "Config_Starbeam.h"
-#include "MessageAuth.h"
+#include "MeshCrypto.h"
 #include "DisplayManager.h"
 #include "ButtonManager.h"
 #include "LEDManager.h"
@@ -20,7 +20,7 @@ const char* BUTTON_LABELS[] = { "KEY1", "KEY2", "KEY3" };
 
 bool isServer = false;
 String unitName = DEFAULT_UNIT_NAME;
-uint32_t currentPasskey = DEFAULT_PASSKEY;
+char currentPassphrase[65] = DEFAULT_PASSPHRASE;
 String messageHistory[10];
 int historyCount = 0;
 
@@ -196,38 +196,23 @@ void broadcastEmergency() {
   // BACKUP: Also send via BLE for close-range reliability
   // Send 3 times for redundancy on BLE channel
   for (int i = 0; i < 3; i++) {
-    // Generate HMAC
-    uint8_t hmac[HMAC_SIZE];
-    char passkeyStr[16];
-    snprintf(passkeyStr, sizeof(passkeyStr), "%06lu", (unsigned long)currentPasskey);
-
-    if (MessageAuth::generateHMAC(baseMsg, passkeyStr, hmac, HMAC_SIZE)) {
-      char hmacHex[HMAC_HEX_SIZE + 1];
-      MessageAuth::toHex(hmac, HMAC_SIZE, hmacHex, sizeof(hmacHex));
-
-      char authenticatedMsg[MAX_MESSAGE_SIZE];
-      snprintf(authenticatedMsg, sizeof(authenticatedMsg), "%s:%s", baseMsg, hmacHex);
-
-      // Broadcast via appropriate BLE channel
-      if (isServer) {
-        // Server broadcasts to all clients
+    // Broadcast via appropriate BLE channel
+    if (isServer) {
 #if BLE_ENABLED
-        if (pTxCharacteristic && pServer && pServer->getConnectedCount() > 0) {
-          pTxCharacteristic->setValue(std::string(authenticatedMsg));
-          pTxCharacteristic->notify(true);
-        }
-#endif
-      } else {
-        // Client sends to server
-#if BLE_ENABLED
-        if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
-          pRemoteRxCharacteristic->writeValue(std::string(authenticatedMsg), false);
-        }
-#endif
+      if (pTxCharacteristic && pServer && pServer->getConnectedCount() > 0) {
+        pTxCharacteristic->setValue(std::string(baseMsg));
+        pTxCharacteristic->notify(true);
       }
-
-      delay(100); // Small delay between transmissions
+#endif
+    } else {
+#if BLE_ENABLED
+      if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
+        pRemoteRxCharacteristic->writeValue(std::string(baseMsg), false);
+      }
+#endif
     }
+
+    delay(100); // Small delay between transmissions
   }
 
   addToHistory("EMERGENCY");
@@ -295,48 +280,53 @@ void handleButtons() {
   // Regular button presses handled by Client/Server loops
 }
 
-void configurePasskey() {
-  oledPrint("Enter 6-digit PIN", "Serial (10s timeout)");
-  output.println("Enter 6-digit passkey (or press Enter for default 123456):");
+void configurePassphrase() {
+  // Check NVS for saved passphrase first
+  char saved[65] = {0};
+  if (MeshCrypto::loadPassphrase(saved, sizeof(saved)) && strlen(saved) >= MIN_PASSPHRASE_LEN) {
+    strncpy(currentPassphrase, saved, sizeof(currentPassphrase) - 1);
+    currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+    output.println("Loaded saved passphrase from NVS");
+    oledPrint("Passphrase loaded", "From NVS");
+    delay(500);
+    return;
+  }
+
+  oledPrint("Enter passphrase", "Serial (15s timeout)");
+  output.println("Enter mesh passphrase (min 4 chars, or Enter for default):");
 
   unsigned long start = millis();
   String input = "";
 
-  while (millis() - start < 10000) {
+  while (millis() - start < 15000) {
     if (Serial.available()) {
       char c = Serial.read();
       if (c == '\n' || c == '\r') break;
-      if (isdigit(c) && input.length() < PASSKEY_DIGITS) {
+      if (c >= 0x20 && c < 0x7F && input.length() < MAX_PASSPHRASE_LEN) {
         input += c;
-        output.print('*');  // Echo asterisk for feedback
+        output.print('*');
       }
     }
   }
   output.println();
 
-  // Validate passkey
-  if (input.length() == PASSKEY_DIGITS) {
-    uint32_t newPasskey = input.toInt();
-    if (newPasskey >= MIN_PASSKEY && newPasskey <= MAX_PASSKEY) {
-      currentPasskey = newPasskey;
-      output.print("Passkey set to: ");
-      output.println(currentPasskey);
-      oledPrint("PIN configured", "Secure connection");
-      delay(1000);
-      return;
-    } else {
-      output.println("ERROR: Passkey out of range (100000-999999)");
-    }
+  if (input.length() >= MIN_PASSPHRASE_LEN) {
+    strncpy(currentPassphrase, input.c_str(), sizeof(currentPassphrase) - 1);
+    currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+    MeshCrypto::savePassphrase(currentPassphrase);
+    output.println("Passphrase set and saved to NVS");
+    oledPrint("Passphrase set", "Saved to device");
+    delay(1000);
+    return;
   } else if (input.length() > 0) {
-    output.print("ERROR: Passkey must be exactly ");
-    output.print(PASSKEY_DIGITS);
-    output.println(" digits");
+    output.printf("Too short (min %d chars). Using default.\n", MIN_PASSPHRASE_LEN);
   }
 
-  // Use default passkey
-  output.println("Using default passkey: 123456");
-  output.println("WARNING: Default passkey is insecure! Change it for production use.");
-  oledPrint("Using default PIN", "⚠ INSECURE ⚠");
+  // Use default passphrase
+  strncpy(currentPassphrase, DEFAULT_PASSPHRASE, sizeof(currentPassphrase) - 1);
+  output.println("Using default passphrase");
+  output.println("WARNING: Default passphrase is insecure! Use 'passphrase' command to change.");
+  oledPrint("Default passphrase", "INSECURE");
   delay(2000);
 }
 
@@ -356,67 +346,37 @@ void simulateButtonPress(int buttonIndex) {
   // Use the same logic as physical button press
   lastButtonPressMillis = millis();
 
+  // Build message for button press
+  char baseMsg[64];
+  snprintf(baseMsg, sizeof(baseMsg), "%s:%d:%s",
+           unitName.c_str(), buttonIndex + 1, BUTTON_LABELS[buttonIndex]);
+
+  // Send via mesh (encrypted by MeshManager)
+#if MESH_ENABLED
+  meshMgr.broadcast((uint8_t*)baseMsg, strlen(baseMsg));
+#endif
+
+  // Also send via BLE if available
   if (isServer) {
-    // Server sends to all clients (same as loopServer)
-    char baseMsg[64];
-    snprintf(baseMsg, sizeof(baseMsg), "%s:%d:%s",
-             unitName.c_str(), buttonIndex + 1, BUTTON_LABELS[buttonIndex]);
-
-    // Generate HMAC
-    uint8_t hmac[HMAC_SIZE];
-    char passkeyStr[16];
-    snprintf(passkeyStr, sizeof(passkeyStr), "%06lu", (unsigned long)currentPasskey);
-
-    if (MessageAuth::generateHMAC(baseMsg, passkeyStr, hmac, HMAC_SIZE)) {
-      char hmacHex[HMAC_HEX_SIZE + 1];
-      MessageAuth::toHex(hmac, HMAC_SIZE, hmacHex, sizeof(hmacHex));
-
-      char authenticatedMsg[MAX_MESSAGE_SIZE];
-      snprintf(authenticatedMsg, sizeof(authenticatedMsg), "%s:%s", baseMsg, hmacHex);
-
 #if BLE_ENABLED
-      if (pTxCharacteristic && pServer && pServer->getConnectedCount() > 0) {
-        pTxCharacteristic->setValue(std::string(authenticatedMsg));
-        pTxCharacteristic->notify(true);
-      }
-#endif
-
-      addToHistory(baseMsg);
-      char sentMsg[32];
-      snprintf(sentMsg, sizeof(sentMsg), "Sent: %s", baseMsg);
-      oledPrint(sentMsg, "");
-      beep();
+    if (pTxCharacteristic && pServer && pServer->getConnectedCount() > 0) {
+      pTxCharacteristic->setValue(std::string(baseMsg));
+      pTxCharacteristic->notify(true);
     }
+#endif
   } else {
-    // Client sends to server (same as Client.cpp handleClientButtons)
-    char baseMsg[64];
-    snprintf(baseMsg, sizeof(baseMsg), "%s:%d:%s",
-             unitName.c_str(), buttonIndex + 1, BUTTON_LABELS[buttonIndex]);
-
-    uint8_t hmac[HMAC_SIZE];
-    char passkeyStr[16];
-    snprintf(passkeyStr, sizeof(passkeyStr), "%06lu", (unsigned long)currentPasskey);
-
-    if (MessageAuth::generateHMAC(baseMsg, passkeyStr, hmac, HMAC_SIZE)) {
-      char hmacHex[HMAC_HEX_SIZE + 1];
-      MessageAuth::toHex(hmac, HMAC_SIZE, hmacHex, sizeof(hmacHex));
-
-      char authenticatedMsg[MAX_MESSAGE_SIZE];
-      snprintf(authenticatedMsg, sizeof(authenticatedMsg), "%s:%s", baseMsg, hmacHex);
-
 #if BLE_ENABLED
-      if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
-        pRemoteRxCharacteristic->writeValue(std::string(authenticatedMsg), false);
-      }
-#endif
-
-      addToHistory(baseMsg);
-      char sentMsg[32];
-      snprintf(sentMsg, sizeof(sentMsg), "Sent: %s", baseMsg);
-      oledPrint(sentMsg, "");
-      beep();
+    if (pRemoteRxCharacteristic && pRemoteRxCharacteristic->canWrite()) {
+      pRemoteRxCharacteristic->writeValue(std::string(baseMsg), false);
     }
+#endif
   }
+
+  addToHistory(baseMsg);
+  char sentMsg[32];
+  snprintf(sentMsg, sizeof(sentMsg), "Sent: %s", baseMsg);
+  oledPrint(sentMsg, "");
+  beep();
 }
 
 void setup() {
@@ -455,7 +415,7 @@ void setup() {
   buzzerMgr.begin();
 
   detectRole();
-  configurePasskey();
+  configurePassphrase();
 
   // Initialize BLE UART service with unit name (after detectRole sets it)
 #if BLE_UART_ENABLED
@@ -472,7 +432,7 @@ void setup() {
   // This runs alongside BLE for extended range and true mesh relay
 #if MESH_ENABLED
   oledPrint("Starting Mesh...", "ESP-NOW");
-  if (meshMgr.begin(unitName.c_str(), currentPasskey)) {
+  if (meshMgr.begin(unitName.c_str(), currentPassphrase)) {
     output.println("Mesh networking enabled (ESP-NOW)");
     output.printf("  - Range: ~250m (vs BLE ~30m)\n");
     output.printf("  - TTL: %d hops max\n", MESH_DEFAULT_TTL);

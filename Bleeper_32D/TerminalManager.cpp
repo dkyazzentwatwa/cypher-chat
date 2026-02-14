@@ -1,6 +1,7 @@
 #include "TerminalManager.h"
 #include "DisplayManager.h"
 #include "MeshManager.h"
+#include "MeshCrypto.h"
 #include "GPSManager.h"
 #include "OutputManager.h"
 #if BLE_UART_ENABLED
@@ -13,7 +14,7 @@ TerminalManager terminalMgr;
 
 // External references
 extern String unitName;
-extern uint32_t currentPasskey;
+extern char currentPassphrase[65];
 extern bool isServer;
 extern void simulateButtonPress(int buttonIndex);
 extern void broadcastEmergency();
@@ -40,10 +41,11 @@ const CommandDesc TerminalManager::commands[] = {
   {"config",    "cfg",  nullptr,    "Show current configuration",                           CAT_DISPLAY},
 
   // Configuration commands
-  {"name",      nullptr, "<name>",  "Change unit name",                                     CAT_CONFIG},
-  {"passkey",   "pk",   "<6dig>",   "Change passkey (requires restart)",                    CAT_CONFIG},
-  {"mode",      nullptr, "<mode>",  "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
-  {"ansi",      nullptr, "<on/off>", "Enable/disable ANSI colors",                          CAT_CONFIG},
+  {"name",       nullptr, "<name>",     "Change unit name",                                     CAT_CONFIG},
+  {"passphrase", "pp",   "<phrase>",    "Change mesh passphrase (saves to NVS, requires restart)", CAT_CONFIG},
+  {"newkey",     "nk",   nullptr,       "Rotate encryption key (re-enter passphrase on all nodes)", CAT_CONFIG},
+  {"mode",       nullptr, "<mode>",     "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
+  {"ansi",       nullptr, "<on/off>",   "Enable/disable ANSI colors",                          CAT_CONFIG},
 
   // System commands
   {"help",      "h",    "[cmd]",    "Show help (optionally for specific command)",          CAT_SYSTEM},
@@ -533,8 +535,10 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
   // Configuration commands
   else if (strcmp(cmd, "name") == 0) {
     cmdName(args);
-  } else if (strcmp(cmd, "passkey") == 0) {
-    cmdPasskey(args);
+  } else if (strcmp(cmd, "passphrase") == 0) {
+    cmdPassphrase(args);
+  } else if (strcmp(cmd, "newkey") == 0) {
+    cmdNewKey(args);
   } else if (strcmp(cmd, "mode") == 0) {
     cmdMode(args);
   } else if (strcmp(cmd, "ansi") == 0) {
@@ -681,24 +685,37 @@ void TerminalManager::cmdName(const char* newName) {
   output.println("Note: Restart required for BLE advertising to update.");
 }
 
-void TerminalManager::cmdPasskey(const char* newKey) {
-  if (strlen(newKey) != PASSKEY_DIGITS) {
-    output.print("Error: Passkey must be exactly ");
-    output.print(PASSKEY_DIGITS);
-    output.println(" digits");
+void TerminalManager::cmdPassphrase(const char* newPhrase) {
+  if (strlen(newPhrase) < MIN_PASSPHRASE_LEN) {
+    output.printf("Error: Passphrase must be at least %d characters\n", MIN_PASSPHRASE_LEN);
     return;
   }
 
-  uint32_t passkey = atoi(newKey);
-  if (passkey < MIN_PASSKEY || passkey > MAX_PASSKEY) {
-    output.println("Error: Passkey out of range (100000-999999)");
+  if (strlen(newPhrase) > MAX_PASSPHRASE_LEN) {
+    output.printf("Error: Passphrase must be at most %d characters\n", MAX_PASSPHRASE_LEN);
     return;
   }
 
-  currentPasskey = passkey;
-  output.print("Passkey changed to: ");
-  output.println(currentPasskey);
-  output.println("Note: Restart required to apply new passkey.");
+  strncpy(currentPassphrase, newPhrase, sizeof(currentPassphrase) - 1);
+  currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+  MeshCrypto::savePassphrase(currentPassphrase);
+  output.println("Passphrase changed and saved to NVS.");
+  output.println("Restart required to apply new passphrase to mesh.");
+}
+
+void TerminalManager::cmdNewKey(const char* args) {
+  (void)args;
+  output.println("Rotating encryption key...");
+  output.println("WARNING: All other mesh nodes must also run 'newkey' or be restarted");
+  output.println("         with the same passphrase, or they will be unable to communicate.");
+  output.println();
+
+  if (MeshCrypto::rotateKey(currentPassphrase)) {
+    output.println("Key rotation complete. New keys derived from current passphrase.");
+    output.println("Replay counters cleared (new epoch).");
+  } else {
+    printColored("Error: Key rotation failed!\n", COLOR_RED);
+  }
 }
 
 void TerminalManager::cmdMode(const char* modeStr) {
@@ -908,7 +925,7 @@ void TerminalManager::cmdVersion() {
   printColored("gps ", COLOR_DIM);
 #endif
   printColored("BLE ", COLOR_GREEN);
-  printColored("HMAC-SHA256\n", COLOR_GREEN);
+  printColored("ChaCha20-Poly1305 AEAD\n", COLOR_GREEN);
 
   output.println();
 }
@@ -1207,9 +1224,10 @@ void TerminalManager::displayConfigMenu() {
   output.println("║");
   output.println("╠════════════════════════════════════════════════╣");
   output.println("║ Use command mode to change settings:           ║");
-  output.println("║   name <newname>  - Change unit name           ║");
-  output.println("║   passkey <6dig>  - Change passkey             ║");
-  output.println("║   mode <mode>     - Change terminal mode       ║");
+  output.println("║   name <newname>      - Change unit name       ║");
+  output.println("║   passphrase <text>   - Change passphrase      ║");
+  output.println("║   newkey              - Rotate encryption key   ║");
+  output.println("║   mode <mode>         - Change terminal mode   ║");
   output.println("╠════════════════════════════════════════════════╣");
   output.println("║ [0] Back to Main Menu                          ║");
   output.println("╚════════════════════════════════════════════════╝");
@@ -1388,9 +1406,18 @@ void TerminalManager::printConfiguration() {
   output.println(unitName);
   output.print("Role: ");
   output.println(isServer ? "SERVER" : "CLIENT");
-  output.print("Passkey: ");
-  output.print(currentPasskey);
-  output.println(" (configured)");
+  output.print("Passphrase: ");
+  bool isDefault = (strcmp(currentPassphrase, DEFAULT_PASSPHRASE) == 0);
+  if (isDefault) {
+    printColored("DEFAULT (insecure!)", COLOR_RED);
+  } else {
+    printColored("****", COLOR_GREEN);
+    output.print(" (");
+    output.print(strlen(currentPassphrase));
+    output.print(" chars)");
+  }
+  output.println();
+  output.println("Encryption: ChaCha20-Poly1305 AEAD + HKDF-SHA256");
   output.print("Terminal Mode: ");
   switch (mode) {
     case TERM_QUIET: output.println("QUIET"); break;

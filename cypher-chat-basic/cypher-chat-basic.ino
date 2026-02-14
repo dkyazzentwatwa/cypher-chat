@@ -13,7 +13,7 @@
  * - USB Serial terminal (115200 baud)
  * - Bluetooth Serial terminal (BLE UART - works with phone apps)
  * - ESP-NOW mesh networking (~250m range, multi-hop relay)
- * - HMAC-SHA256 message authentication
+ * - ChaCha20-Poly1305 AEAD encryption + HKDF-SHA256 key derivation
  *
  * Compatible phone apps:
  * - nRF Connect (iOS/Android)
@@ -22,7 +22,7 @@
  */
 
 #include "Config_Basic.h"
-#include "MessageAuth.h"
+#include "MeshCrypto.h"
 #include "OutputManager.h"
 #if BLE_UART_ENABLED
 #include "BLEUARTManager.h"
@@ -34,7 +34,7 @@
 // Global runtime state
 bool isServer = false;  // Role not used in basic version
 String unitName = DEFAULT_UNIT_NAME;
-uint32_t currentPasskey = DEFAULT_PASSKEY;
+char currentPassphrase[65] = DEFAULT_PASSPHRASE;
 String messageHistory[10];
 int historyCount = 0;
 
@@ -208,21 +208,32 @@ void simulateButtonPress(int buttonIndex) {
 #endif
 }
 
-void configurePasskey() {
+void configurePassphrase() {
+  // Try to load saved passphrase from NVS first
+  char saved[65];
+  if (MeshCrypto::loadPassphrase(saved, sizeof(saved))) {
+    strncpy(currentPassphrase, saved, sizeof(currentPassphrase) - 1);
+    currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+    output.print("Loaded saved passphrase (");
+    output.print(strlen(currentPassphrase));
+    output.println(" chars)");
+    return;
+  }
+
   output.println("\n╔════════════════════════════════════════════════╗");
   output.println("║       STARBEAM BASIC - Initial Setup           ║");
   output.println("╚════════════════════════════════════════════════╝");
-  output.println("\nEnter 6-digit passkey (or press Enter for default 123456):");
-  output.println("Timeout: 10 seconds\n");
+  output.println("\nEnter passphrase (min 4 chars, or press Enter for default):");
+  output.println("Timeout: 15 seconds\n");
 
   unsigned long start = millis();
   String input = "";
 
-  while (millis() - start < 10000) {
+  while (millis() - start < 15000) {
     if (Serial.available()) {
       char c = Serial.read();
       if (c == '\n' || c == '\r') break;
-      if (isdigit(c) && input.length() < PASSKEY_DIGITS) {
+      if (isPrintable(c) && input.length() < MAX_PASSPHRASE_LEN) {
         input += c;
         output.print('*');
       }
@@ -230,21 +241,21 @@ void configurePasskey() {
   }
   output.println();
 
-  // Validate passkey
-  if (input.length() == PASSKEY_DIGITS) {
-    uint32_t newPasskey = input.toInt();
-    if (newPasskey >= MIN_PASSKEY && newPasskey <= MAX_PASSKEY) {
-      currentPasskey = newPasskey;
-      output.print("Passkey set to: ");
-      output.println(currentPasskey);
-      delay(1000);
-      return;
-    }
+  // Validate passphrase
+  if (input.length() >= MIN_PASSPHRASE_LEN) {
+    strncpy(currentPassphrase, input.c_str(), sizeof(currentPassphrase) - 1);
+    currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+    MeshCrypto::savePassphrase(currentPassphrase);
+    output.print("Passphrase set (");
+    output.print(strlen(currentPassphrase));
+    output.println(" chars) - saved to NVS");
+    delay(1000);
+    return;
   }
 
-  // Use default passkey
-  output.println("Using default passkey: 123456");
-  output.println("(Change with 'passkey' command)");
+  // Use default passphrase
+  output.println("Using default passphrase");
+  output.println("(Change with 'passphrase' command)");
   delay(1000);
 }
 
@@ -258,8 +269,8 @@ void setup() {
   // Initialize terminal interface
   terminalMgr.begin();
 
-  // Configure passkey
-  configurePasskey();
+  // Configure passphrase
+  configurePassphrase();
 
   // Initialize BLE UART service for phone connectivity
 #if BLE_UART_ENABLED
@@ -271,7 +282,7 @@ void setup() {
   // Initialize mesh networking
 #if MESH_ENABLED
   output.println("\nStarting Mesh Network (ESP-NOW)...");
-  if (meshMgr.begin(unitName.c_str(), currentPasskey)) {
+  if (meshMgr.begin(unitName.c_str(), currentPassphrase)) {
     output.println("Mesh networking enabled");
     output.printf("  - Range: ~250m per hop\n");
     output.printf("  - TTL: %d hops max\n", MESH_DEFAULT_TTL);

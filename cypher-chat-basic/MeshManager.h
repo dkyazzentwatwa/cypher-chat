@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <vector>
 #include <map>
+#include "MeshCrypto.h"
 
 /**
  * MeshManager - ESP-NOW based mesh networking for Cypher-Chat
@@ -31,6 +32,8 @@
 #define MESH_PEER_TIMEOUT_MS  60000   // Peer considered offline after 60s
 #define MESH_HEARTBEAT_MS     15000   // Heartbeat interval
 #define MESH_CHANNEL          1       // WiFi channel for ESP-NOW
+#define MESH_EMERGENCY_COOLDOWN_MS 10000  // Rate limit: 1 emergency per 10s per sender
+#define MESH_MAX_PLAINTEXT    (MESH_MAX_PAYLOAD - MESH_CRYPTO_OVERHEAD)  // Max plaintext after crypto overhead
 
 // Message types for mesh protocol
 enum MeshMessageType : uint8_t {
@@ -154,10 +157,10 @@ public:
   /**
    * Initialize ESP-NOW mesh networking
    * @param unitName This device's identifier
-   * @param passkey Shared passkey for HMAC
+   * @param passphrase Shared passphrase for AEAD encryption
    * @return true if initialization successful
    */
-  bool begin(const char* unitName, uint32_t passkey);
+  bool begin(const char* unitName, const char* passphrase);
 
   /**
    * Stop mesh networking and release resources
@@ -294,10 +297,6 @@ private:
   // Heartbeat
   void sendHeartbeat();
 
-  // HMAC authentication
-  bool signPacket(MeshPacket* packet);
-  bool verifyPacket(const MeshPacket* packet);
-
   // Utility
   uint32_t generateMessageId();
   bool addEspNowPeer(const uint8_t* mac);
@@ -310,7 +309,6 @@ private:
   // State
   bool _running;
   char _unitName[17];
-  uint32_t _passkey;
   uint8_t _myMac[6];
   GPSCoordinates _myGPS;
 
@@ -340,6 +338,9 @@ private:
   uint32_t _msgsRelayed;
   uint32_t _msgsDropped;
   uint32_t _messageIdCounter;
+
+  // Emergency rate limiting: MAC -> last emergency timestamp
+  std::map<uint64_t, uint32_t> _emergencyRateLimit;
 };
 
 // Global instance

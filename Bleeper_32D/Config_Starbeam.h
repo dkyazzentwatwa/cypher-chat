@@ -13,22 +13,22 @@
 // -- PROJECT IDENTIFICATION --
 #define PROJECT_NAME "STARBEAM"
 #define DEFAULT_UNIT_NAME "STARBEAM_NODE"
-#define DEFAULT_PASSKEY 123456
+#define DEFAULT_PASSPHRASE "123456"
 
 // -- RUNTIME CONFIGURATION --
 extern String unitName;
-extern uint32_t currentPasskey;
+extern char currentPassphrase[65];
 extern bool isServer;
 
 // -- SECURITY & VALIDATION CONSTANTS --
 #define MAX_MESSAGE_SIZE 128
 #define MIN_MESSAGE_SIZE 5
 #define MAX_UNIT_NAME_LEN 16
-#define MIN_PASSKEY 100000
-#define MAX_PASSKEY 999999
-#define PASSKEY_DIGITS 6
-#define HMAC_SIZE 8
-#define HMAC_HEX_SIZE (HMAC_SIZE * 2)
+#define MAX_PASSPHRASE_LEN 64
+#define MIN_PASSPHRASE_LEN 4
+
+// -- MESH CRYPTO PROTOCOL --
+#define MESH_PROTOCOL_VERSION 0x02
 
 // -- NRF24L01+PA+LNA Modules --
 #define NRF_U2_MISO 19
