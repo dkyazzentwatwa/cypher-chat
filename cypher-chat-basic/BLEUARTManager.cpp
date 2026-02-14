@@ -34,6 +34,11 @@ bool BLEUARTManager::begin(const char* deviceName) {
   // Initialize NimBLE device
   NimBLEDevice::init(_deviceName);
 
+  // Enable BLE security: bonding + MITM protection + secure connections
+  NimBLEDevice::setSecurityAuth(true, true, true);
+  NimBLEDevice::setSecurityPasskey(123456);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+
   // Create BLE Server
   _pServer = NimBLEDevice::createServer();
   if (!_pServer) {
@@ -51,13 +56,13 @@ bool BLEUARTManager::begin(const char* deviceName) {
   // Create TX Characteristic (notify to client)
   _pTxCharacteristic = _pService->createCharacteristic(
     BLE_UART_TX_CHARACTERISTIC,
-    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::NOTIFY
   );
 
   // Create RX Characteristic (write from client)
   _pRxCharacteristic = _pService->createCharacteristic(
     BLE_UART_RX_CHARACTERISTIC,
-    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_NR
   );
 
   _pRxCharacteristic->setCallbacks(new RxCallbacks(this));

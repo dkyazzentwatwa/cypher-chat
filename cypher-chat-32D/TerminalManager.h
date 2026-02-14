@@ -166,7 +166,8 @@ private:
 
   // Command handlers - Configuration
   void cmdName(const char* newName);
-  void cmdPasskey(const char* newKey);
+  void cmdPassphrase(const char* newPhrase);
+  void cmdNewKey(const char* args);
   void cmdMode(const char* modeStr);
   void cmdAnsi(const char* args);
   void cmdSettings();

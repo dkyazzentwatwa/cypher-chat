@@ -1,5 +1,6 @@
 #include "TerminalManager.h"
 #include "MeshManager.h"
+#include "MeshCrypto.h"
 #include "OutputManager.h"
 #if BLE_UART_ENABLED
 #include "BLEUARTManager.h"
@@ -11,7 +12,7 @@ TerminalManager terminalMgr;
 
 // External references
 extern String unitName;
-extern uint32_t currentPasskey;
+extern char currentPassphrase[65];
 extern bool isServer;
 extern void simulateButtonPress(int buttonIndex);
 extern void broadcastEmergency();
@@ -39,7 +40,8 @@ const CommandDesc TerminalManager::commands[] = {
 
   // Configuration commands
   {"name",      nullptr, "<name>",  "Change unit name",                                     CAT_CONFIG},
-  {"passkey",   "pk",   "<6dig>",   "Change passkey (requires restart)",                    CAT_CONFIG},
+  {"passphrase","pp",   "<phrase>",  "Change passphrase (min 4 chars, saved to NVS)",        CAT_CONFIG},
+  {"newkey",    "nk",   nullptr,    "Rotate encryption key (re-derives from passphrase)",   CAT_CONFIG},
   {"mode",      nullptr, "<mode>",  "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
   {"ansi",      nullptr, "<on/off>", "Enable/disable ANSI colors",                          CAT_CONFIG},
 
@@ -531,8 +533,10 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
   // Configuration commands
   else if (strcmp(cmd, "name") == 0) {
     cmdName(args);
-  } else if (strcmp(cmd, "passkey") == 0) {
-    cmdPasskey(args);
+  } else if (strcmp(cmd, "passphrase") == 0) {
+    cmdPassphrase(args);
+  } else if (strcmp(cmd, "newkey") == 0) {
+    cmdNewKey(args);
   } else if (strcmp(cmd, "mode") == 0) {
     cmdMode(args);
   } else if (strcmp(cmd, "ansi") == 0) {
@@ -679,24 +683,35 @@ void TerminalManager::cmdName(const char* newName) {
   output.println("Note: Restart required for BLE advertising to update.");
 }
 
-void TerminalManager::cmdPasskey(const char* newKey) {
-  if (strlen(newKey) != PASSKEY_DIGITS) {
-    output.print("Error: Passkey must be exactly ");
-    output.print(PASSKEY_DIGITS);
-    output.println(" digits");
+void TerminalManager::cmdPassphrase(const char* newPhrase) {
+  if (strlen(newPhrase) < MIN_PASSPHRASE_LEN) {
+    output.print("Error: Passphrase must be at least ");
+    output.print(MIN_PASSPHRASE_LEN);
+    output.println(" characters");
     return;
   }
 
-  uint32_t passkey = atoi(newKey);
-  if (passkey < MIN_PASSKEY || passkey > MAX_PASSKEY) {
-    output.println("Error: Passkey out of range (100000-999999)");
+  if (strlen(newPhrase) > MAX_PASSPHRASE_LEN) {
+    output.print("Error: Passphrase must be at most ");
+    output.print(MAX_PASSPHRASE_LEN);
+    output.println(" characters");
     return;
   }
 
-  currentPasskey = passkey;
-  output.print("Passkey changed to: ");
-  output.println(currentPasskey);
-  output.println("Note: Restart required to apply new passkey.");
+  strncpy(currentPassphrase, newPhrase, sizeof(currentPassphrase) - 1);
+  currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+  MeshCrypto::savePassphrase(currentPassphrase);
+  output.print("Passphrase changed (");
+  output.print(strlen(currentPassphrase));
+  output.println(" chars) - saved to NVS");
+  output.println("Note: Restart required to apply new passphrase.");
+}
+
+void TerminalManager::cmdNewKey(const char* args) {
+  output.println("Rotating encryption key...");
+  MeshCrypto::rotateKey(currentPassphrase);
+  output.println("Encryption key rotated from current passphrase.");
+  output.println("Note: All peers must use the same passphrase.");
 }
 
 void TerminalManager::cmdMode(const char* modeStr) {
@@ -910,7 +925,7 @@ void TerminalManager::cmdVersion() {
 #else
   printColored("ble-uart ", COLOR_DIM);
 #endif
-  printColored("HMAC-SHA256\n", COLOR_GREEN);
+  printColored("ChaCha20-Poly1305\n", COLOR_GREEN);
 
   output.println();
 }
@@ -1154,7 +1169,7 @@ void TerminalManager::displayConfigMenu() {
   output.println("================================================");
   output.println(" Use command mode to change settings:           ");
   output.println("   name <newname>  - Change unit name           ");
-  output.println("   passkey <6dig>  - Change passkey             ");
+  output.println("   passphrase <pp> - Change passphrase          ");
   output.println("   mode <mode>     - Change terminal mode       ");
   output.println("================================================");
   output.println(" [0] Back to Main Menu                          ");
@@ -1340,9 +1355,10 @@ void TerminalManager::printConfiguration() {
   output.println(unitName);
   output.print("Role: ");
   output.println(isServer ? "SERVER" : "CLIENT");
-  output.print("Passkey: ");
-  output.print(currentPasskey);
-  output.println(" (configured)");
+  output.print("Passphrase: ");
+  output.print(strlen(currentPassphrase));
+  output.println(" chars (configured)");
+  output.println("Encryption: ChaCha20-Poly1305 AEAD");
   output.print("Terminal Mode: ");
   switch (mode) {
     case TERM_QUIET: output.println("QUIET"); break;
