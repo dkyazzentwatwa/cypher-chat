@@ -1,12 +1,15 @@
 #include "TerminalManager.h"
 #include "DisplayManager.h"
 #include "MeshManager.h"
+#include "MeshCrypto.h"
 #include "GPSManager.h"
 #include "OutputManager.h"
 #include "PowerManager.h"
 #include "TimeManager.h"
+#if FILESYSTEM_ENABLED
 #include "FileSystemManager.h"
 #include "LogManager.h"
+#endif
 #include "SecurityManager.h"
 #include "LEDManager.h"
 #if BLE_UART_ENABLED
@@ -19,7 +22,7 @@ TerminalManager terminalMgr;
 
 // External references
 extern String unitName;
-extern uint32_t currentPasskey;
+extern char currentPassphrase[65];
 extern bool isServer;
 extern void simulateButtonPress(int buttonIndex);
 extern void broadcastEmergency();
@@ -641,8 +644,8 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
   // Configuration commands
   else if (strcmp(cmd, "name") == 0) {
     cmdName(args);
-  } else if (strcmp(cmd, "passkey") == 0) {
-    cmdPasskey(args);
+  } else if (strcmp(cmd, "passphrase") == 0 || strcmp(cmd, "passkey") == 0) {
+    cmdPassphrase(args);
   } else if (strcmp(cmd, "mode") == 0) {
     cmdMode(args);
   } else if (strcmp(cmd, "ansi") == 0) {
@@ -895,24 +898,26 @@ void TerminalManager::cmdName(const char* newName) {
   output.println("Note: Restart required for BLE advertising to update.");
 }
 
-void TerminalManager::cmdPasskey(const char* newKey) {
-  if (strlen(newKey) != PASSKEY_DIGITS) {
-    output.print("Error: Passkey must be exactly ");
-    output.print(PASSKEY_DIGITS);
-    output.println(" digits");
+void TerminalManager::cmdPassphrase(const char* newPhrase) {
+  size_t len = strlen(newPhrase);
+  if (len < MIN_PASSPHRASE_LEN) {
+    output.print("Error: Passphrase must be at least ");
+    output.print(MIN_PASSPHRASE_LEN);
+    output.println(" characters");
+    return;
+  }
+  if (len > MAX_PASSPHRASE_LEN) {
+    output.print("Error: Passphrase must be at most ");
+    output.print(MAX_PASSPHRASE_LEN);
+    output.println(" characters");
     return;
   }
 
-  uint32_t passkey = atoi(newKey);
-  if (passkey < MIN_PASSKEY || passkey > MAX_PASSKEY) {
-    output.println("Error: Passkey out of range (100000-999999)");
-    return;
-  }
-
-  currentPasskey = passkey;
-  output.print("Passkey changed to: ");
-  output.println(currentPasskey);
-  output.println("Note: Restart required to apply new passkey.");
+  strncpy(currentPassphrase, newPhrase, sizeof(currentPassphrase) - 1);
+  currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+  MeshCrypto::savePassphrase(currentPassphrase);
+  output.println("Passphrase updated and saved to NVS.");
+  output.println("Note: Restart required to apply new encryption key.");
 }
 
 void TerminalManager::cmdMode(const char* modeStr) {
@@ -1661,9 +1666,9 @@ void TerminalManager::printConfiguration() {
   output.println(unitName);
   output.print("Role: ");
   output.println(isServer ? "SERVER" : "CLIENT");
-  output.print("Passkey: ");
-  output.print(currentPasskey);
-  output.println(" (configured)");
+  output.print("Passphrase: ");
+  output.print(strlen(currentPassphrase));
+  output.println(" chars (configured)");
   output.print("Terminal Mode: ");
   switch (mode) {
     case TERM_QUIET: output.println("QUIET"); break;
@@ -2966,7 +2971,7 @@ void TerminalManager::cmdSettings() {
   snprintf(line, sizeof(line), "║ Role:           %-30s ║", isServer ? "SERVER" : "CLIENT");
   output.println(line);
 
-  snprintf(line, sizeof(line), "║ Passkey:        %06lu (configured)              ║", currentPasskey);
+  snprintf(line, sizeof(line), "║ Passphrase:     %2d chars (configured)            ║", (int)strlen(currentPassphrase));
   output.println(line);
 
   output.println("╠════════════════════════════════════════════════╣");
@@ -3136,10 +3141,12 @@ void TerminalManager::cmdExport() {
   #endif
   output.println("  },");
 
+#if FILESYSTEM_ENABLED
   // Logging configuration
   output.println("  \"logging\": {");
   output.printf("    \"level\": %d\n", logMgr.getLogLevel());
   output.println("  },");
+#endif
 
   // Security configuration
   output.println("  \"security\": {");
@@ -3287,6 +3294,7 @@ void TerminalManager::cmdImport(const char* args) {
     }
   }
 
+#if FILESYSTEM_ENABLED
   // Apply logging settings
   if (doc.containsKey("logging")) {
     if (doc["logging"].containsKey("level")) {
@@ -3295,6 +3303,7 @@ void TerminalManager::cmdImport(const char* args) {
       output.printf("[CFG]   ✓ Log level set to: %d\n", level);
     }
   }
+#endif
 
   // Apply power settings
   if (doc.containsKey("power")) {
@@ -3426,21 +3435,17 @@ void TerminalManager::cmdUnblock(const char* args) {
 
 void TerminalManager::cmdVerify() {
   output.println("\n╔════════════════════════════════════════════════╗");
-  output.println("║           Passkey Verification                 ║");
+  output.println("║         Passphrase Verification                ║");
   output.println("╠════════════════════════════════════════════════╣");
 
   char line[52];
-  snprintf(line, sizeof(line), "║ Passkey:        %06lu                           ║", currentPasskey);
+  snprintf(line, sizeof(line), "║ Passphrase:     %2d chars                        ║", (int)strlen(currentPassphrase));
   output.println(line);
-
-  // Calculate SHA256 hash of passkey for verification
-  char passkeyStr[10];
-  snprintf(passkeyStr, sizeof(passkeyStr), "%06lu", currentPasskey);
 
   // Simple hash display (first 8 chars for verification)
   uint32_t hash = 0;
-  for (int i = 0; passkeyStr[i]; i++) {
-    hash = hash * 31 + passkeyStr[i];
+  for (int i = 0; currentPassphrase[i]; i++) {
+    hash = hash * 31 + currentPassphrase[i];
   }
 
   snprintf(line, sizeof(line), "║ Hash:           %08lX                         ║", hash);
@@ -3968,7 +3973,11 @@ void TerminalManager::cmdLEDTest() {
     delay(tests[i].duration);
 
     // Check for key press to exit
+#if BLE_UART_ENABLED
     if (Serial.available() || bleUARTMgr.available()) {
+#else
+    if (Serial.available()) {
+#endif
       break;
     }
   }
@@ -4045,7 +4054,11 @@ void TerminalManager::cmdButtonTest() {
   // Monitor loop
   while (true) {
     // Check for exit
+#if BLE_UART_ENABLED
     if (Serial.available() || bleUARTMgr.available()) {
+#else
+    if (Serial.available()) {
+#endif
       output.println("\n[HW] Button test stopped");
       break;
     }
@@ -4241,6 +4254,7 @@ void TerminalManager::cmdGPSTest() {
 //-----------------------------------------------------------------------------
 
 void TerminalManager::cmdLogLevel(const char* args) {
+#if FILESYSTEM_ENABLED
   if (strlen(args) == 0) {
     uint8_t currentLevel = logMgr.getLogLevel();
     const char* levelNames[] = {"NONE", "ERROR", "INFO", "WARN", "DEBUG"};
@@ -4274,9 +4288,14 @@ void TerminalManager::cmdLogLevel(const char* args) {
   } else if (level == 4) {
     printColored("[LOG] Warning: DEBUG level produces verbose output\n", COLOR_YELLOW);
   }
+#else
+  output.println("[LOG] Logging disabled (FILESYSTEM_ENABLED=false)");
+  (void)args;
+#endif
 }
 
 void TerminalManager::cmdLogs() {
+#if FILESYSTEM_ENABLED
   output.println("\n╔════════════════════════════════════════════════╗");
   output.println("║            Recent Log Entries                  ║");
   output.println("╠════════════════════════════════════════════════╣");
@@ -4303,6 +4322,9 @@ void TerminalManager::cmdLogs() {
 
   output.println("[LOG] Use 'loglevel <0-4>' to control verbosity");
   output.println("[LOG] Use 'debug on' for full debug output");
+#else
+  output.println("[LOG] Logging disabled (FILESYSTEM_ENABLED=false)");
+#endif
 }
 
 void TerminalManager::cmdDmesg() {
@@ -4440,6 +4462,7 @@ void TerminalManager::cmdDmesg() {
 }
 
 void TerminalManager::cmdDebug(const char* args) {
+#if FILESYSTEM_ENABLED
   if (strlen(args) == 0) {
     uint8_t currentLevel = logMgr.getLogLevel();
     bool debugEnabled = (currentLevel >= LOG_DEBUG);
@@ -4464,6 +4487,10 @@ void TerminalManager::cmdDebug(const char* args) {
   } else {
     printColored("[LOG] Error: Use 'on' or 'off'\n", COLOR_RED);
   }
+#else
+  output.println("[LOG] Logging disabled (FILESYSTEM_ENABLED=false)");
+  (void)args;
+#endif
 }
 
 void TerminalManager::cmdDumpMesh() {

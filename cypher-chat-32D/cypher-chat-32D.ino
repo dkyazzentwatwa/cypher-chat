@@ -13,9 +13,11 @@
 #include "GPSManager.h"
 #include "PowerManager.h"
 #include "SecurityManager.h"
-#include "FileSystemManager.h"
 #include "TimeManager.h"
+#if FILESYSTEM_ENABLED
+#include "FileSystemManager.h"
 #include "LogManager.h"
+#endif
 
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET_PIN);
 unsigned long lastButtonPressMillis = 0;
@@ -422,9 +424,11 @@ void setup() {
   // Initialize new managers
   powerMgr.begin();
   securityMgr.begin();
-  fileSystemMgr.begin();
   timeMgr.begin();
+#if FILESYSTEM_ENABLED
+  fileSystemMgr.begin();
   logMgr.begin();
+#endif
 
   detectRole();
   configurePassphrase();

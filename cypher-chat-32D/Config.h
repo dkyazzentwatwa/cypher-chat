@@ -142,7 +142,7 @@ extern const char* BUTTON_LABELS[];
 #define BATTERY_DIVIDER_RATIO 2.0 // Voltage divider ratio (R1=R2=100K)
 
 // -- FILE SYSTEM (SPIFFS/LittleFS) --
-#define FILESYSTEM_ENABLED true
+#define FILESYSTEM_ENABLED false      // Disabled to save IRAM for NimBLE
 #define FILESYSTEM_SIZE_MB 1.5   // Partition size
 #define FILESYSTEM_MAX_FILES 50  // Maximum file count
 
