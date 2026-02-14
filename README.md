@@ -7,7 +7,7 @@ A minimal ESP32-based BLE chat for quick communication in emergencies.
 2. Install the required libraries: NimBLE-Arduino, Adafruit GFX, and Adafruit SSD1306.
 3. Compile the firmware:
    ```bash
-   arduino-cli compile --fqbn esp32:esp32:esp32 Bleeper.ino
+   arduino-cli compile --fqbn esp32:esp32:esp32 cypher-chat.ino
    ```
 4. Upload to at least two devices.
 5. On boot, hold the first button to start **server** mode; otherwise the device runs as a **client**.

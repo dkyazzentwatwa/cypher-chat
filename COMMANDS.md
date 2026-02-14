@@ -1,4 +1,4 @@
-# STARBEAM Terminal Command Reference
+# CYPHER-CHAT Terminal Command Reference
 
 **Version:** 2.0.0-mesh
 **Total Commands:** 85
@@ -637,7 +637,7 @@ Press **TAB** to autocomplete commands or show matching options.
 
 ## Feature Flags
 
-Commands require specific features to be enabled in `Config_Starbeam.h`:
+Commands require specific features to be enabled in `Config.h`:
 
 | Feature | Flag | Commands Affected |
 |---------|------|------------------|
@@ -692,11 +692,11 @@ Commands require specific features to be enabled in `Config_Starbeam.h`:
 
 - [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md) - Detailed implementation plan
 - [README.md](README.md) - Project overview
-- [Config_Starbeam.h](Bleeper_32D/Config_Starbeam.h) - Hardware configuration
+- [Config.h](cypher-chat/Config.h) - Hardware configuration
 
 ---
 
-**Project:** STARBEAM Off-Grid Communication System
+**Project:** CYPHER-CHAT Off-Grid Communication System
 **Repository:** https://github.com/anthropics/cypher-chat
 **License:** MIT
 **Last Updated:** 2026-02-09

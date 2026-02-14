@@ -1,5 +1,5 @@
 /**
- * STARBEAM BASIC - Minimal ESP32 Mesh Terminal
+ * CYPHER-CHAT BASIC - Minimal ESP32 Mesh Terminal
  *
  * A barebones version of Cypher-Chat for ESP32 boards without
  * additional hardware. Just USB Serial + Bluetooth Serial + Mesh.
@@ -210,7 +210,7 @@ void simulateButtonPress(int buttonIndex) {
 
 void configurePasskey() {
   output.println("\n╔════════════════════════════════════════════════╗");
-  output.println("║       STARBEAM BASIC - Initial Setup           ║");
+  output.println("║       CYPHER-CHAT BASIC - Initial Setup           ║");
   output.println("╚════════════════════════════════════════════════╝");
   output.println("\nEnter 6-digit passkey (or press Enter for default 123456):");
   output.println("Timeout: 10 seconds\n");
@@ -286,7 +286,7 @@ void setup() {
 
   // Ready
   output.println("\n════════════════════════════════════════════════");
-  output.println("  STARBEAM BASIC Ready");
+  output.println("  CYPHER-CHAT BASIC Ready");
   output.println("════════════════════════════════════════════════");
   output.printf("Unit: %s\n", unitName.c_str());
   output.println("Type 'help' for commands\n");

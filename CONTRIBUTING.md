@@ -7,7 +7,7 @@ Thank you for considering contributing to **cypher-chat**!
 2. Make your changes in a branch on your fork.
 3. Run the build to ensure the firmware compiles:
    ```
-   arduino-cli compile --fqbn esp32:esp32:esp32 Bleeper.ino
+   arduino-cli compile --fqbn esp32:esp32:esp32 cypher-chat.ino
    ```
 4. Open a pull request with a clear description of your changes.
 

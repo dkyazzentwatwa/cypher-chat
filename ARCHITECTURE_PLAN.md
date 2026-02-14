@@ -1,4 +1,4 @@
-# STARBEAM Terminal Command Enhancement - Architecture Plan
+# CYPHER-CHAT Terminal Command Enhancement - Architecture Plan
 
 ## Overview
 Expanding from 25 commands to **~85 commands** across **12 categories** to create a comprehensive off-grid device management system.
@@ -271,7 +271,7 @@ class LogManager {
 
 ## Configuration File Changes
 
-### `Config_Starbeam.h` - New Definitions
+### `Config.h` - New Definitions
 ```cpp
 // Battery Monitoring
 #define BATTERY_ENABLED true
@@ -323,7 +323,7 @@ class LogManager {
 ### New Format (12 Sections)
 ```
 ================================================
-  STARBEAM TERMINAL COMMAND REFERENCE
+  CYPHER-CHAT TERMINAL COMMAND REFERENCE
 ================================================
 
 Shortcuts: UP/DOWN - history | TAB - complete
@@ -443,5 +443,5 @@ Commands that delete/modify data (format, reset, queueclear) must:
 ---
 
 *Generated: 2026-02-09*
-*Project: STARBEAM Off-Grid Terminal Enhancement*
+*Project: CYPHER-CHAT Off-Grid Terminal Enhancement*
 *Target Branch: claude/offgrid-terminal-commands-mpjvH*
