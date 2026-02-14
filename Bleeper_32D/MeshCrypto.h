@@ -8,22 +8,22 @@
  *
  * Provides:
  * - HKDF-SHA256 key derivation from passphrase
- * - ChaCha20-Poly1305 AEAD encryption (confidentiality + authentication)
+ * - AES-256-GCM AEAD encryption (confidentiality + authentication)
  * - Per-sender monotonic replay counter protection
  * - LMK key derivation for ESP-NOW link-layer encryption
  * - NVS persistence for replay counters and passphrase
  *
  * Wire format for encrypted payload:
- *   [nonce:12][ciphertext:N][poly1305_tag:16]
+ *   [iv:12][ciphertext:N][gcm_tag:16]
  *
  * AAD (authenticated but not encrypted) = immutable header fields:
  *   [version:1][type:1][messageId:4][originMac:6][destMac:6][payloadLen:1]
  */
 
 // Crypto constants
-#define MESH_CRYPTO_KEY_SIZE       32   // ChaCha20-Poly1305 key (256-bit)
-#define MESH_CRYPTO_NONCE_SIZE     12   // ChaCha20-Poly1305 nonce
-#define MESH_CRYPTO_TAG_SIZE       16   // Poly1305 auth tag
+#define MESH_CRYPTO_KEY_SIZE       32   // AES-256-GCM key (256-bit)
+#define MESH_CRYPTO_NONCE_SIZE     12   // AES-GCM IV/nonce
+#define MESH_CRYPTO_TAG_SIZE       16   // GCM auth tag
 #define MESH_CRYPTO_OVERHEAD       (MESH_CRYPTO_NONCE_SIZE + MESH_CRYPTO_TAG_SIZE)  // 28 bytes
 #define MESH_CRYPTO_LMK_SIZE       16   // ESP-NOW LMK key size
 #define MESH_CRYPTO_AAD_SIZE       19   // Immutable header fields for AAD

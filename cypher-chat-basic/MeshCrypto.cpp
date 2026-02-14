@@ -2,7 +2,7 @@
 #include "MeshManager.h"
 #include <mbedtls/hkdf.h>
 #include <mbedtls/md.h>
-#include <mbedtls/chachapoly.h>
+#include <mbedtls/gcm.h>
 #include <esp_random.h>
 #include <Preferences.h>
 #include <cstring>
@@ -98,52 +98,54 @@ bool MeshCrypto::encryptPayload(MeshPacket* packet) {
   uint8_t plaintext[MESH_MAX_PAYLOAD];
   memcpy(plaintext, packet->payload, payloadLen);
 
-  // Generate random 12-byte nonce using hardware RNG
-  uint8_t nonce[MESH_CRYPTO_NONCE_SIZE];
+  // Generate random 12-byte IV using hardware RNG
+  uint8_t iv[MESH_CRYPTO_NONCE_SIZE];
   uint32_t rng1 = esp_random();
   uint32_t rng2 = esp_random();
   uint32_t rng3 = esp_random();
-  memcpy(&nonce[0], &rng1, 4);
-  memcpy(&nonce[4], &rng2, 4);
-  memcpy(&nonce[8], &rng3, 4);
+  memcpy(&iv[0], &rng1, 4);
+  memcpy(&iv[4], &rng2, 4);
+  memcpy(&iv[8], &rng3, 4);
 
   // Build AAD from immutable header fields
   uint8_t aad[MESH_CRYPTO_AAD_SIZE];
   buildAAD(&packet->header, aad);
 
-  // Encrypt with ChaCha20-Poly1305
-  mbedtls_chachapoly_context ctx;
-  mbedtls_chachapoly_init(&ctx);
+  // Encrypt with AES-256-GCM
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
 
-  int ret = mbedtls_chachapoly_setkey(&ctx, _encKey);
+  int ret = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, _encKey, 256);
   if (ret != 0) {
-    mbedtls_chachapoly_free(&ctx);
+    mbedtls_gcm_free(&ctx);
     return false;
   }
 
   uint8_t ciphertext[MESH_MAX_PAYLOAD];
   uint8_t tag[MESH_CRYPTO_TAG_SIZE];
 
-  ret = mbedtls_chachapoly_encrypt_and_tag(
+  ret = mbedtls_gcm_crypt_and_tag(
     &ctx,
+    MBEDTLS_GCM_ENCRYPT,
     payloadLen,            // plaintext length
-    nonce,                 // 12-byte nonce
-    aad, MESH_CRYPTO_AAD_SIZE,  // additional authenticated data
+    iv, MESH_CRYPTO_NONCE_SIZE,  // 12-byte IV
+    aad, MESH_CRYPTO_AAD_SIZE,   // additional authenticated data
     plaintext,             // input plaintext
     ciphertext,            // output ciphertext
+    MESH_CRYPTO_TAG_SIZE,  // tag length
     tag                    // 16-byte auth tag
   );
 
-  mbedtls_chachapoly_free(&ctx);
+  mbedtls_gcm_free(&ctx);
 
   if (ret != 0) {
     memset(plaintext, 0, sizeof(plaintext));
     return false;
   }
 
-  // Pack into payload buffer: [nonce:12][ciphertext:N][tag:16]
+  // Pack into payload buffer: [iv:12][ciphertext:N][tag:16]
   size_t offset = 0;
-  memcpy(&packet->payload[offset], nonce, MESH_CRYPTO_NONCE_SIZE);
+  memcpy(&packet->payload[offset], iv, MESH_CRYPTO_NONCE_SIZE);
   offset += MESH_CRYPTO_NONCE_SIZE;
   memcpy(&packet->payload[offset], ciphertext, payloadLen);
   offset += payloadLen;
@@ -160,15 +162,15 @@ bool MeshCrypto::decryptPayload(MeshPacket* packet) {
 
   uint8_t payloadLen = packet->header.payloadLen;
 
-  // Verify minimum size (nonce + at least 0 bytes ciphertext + tag)
+  // Verify minimum size (iv + at least 0 bytes ciphertext + tag)
   size_t totalEncrypted = (size_t)MESH_CRYPTO_NONCE_SIZE + payloadLen + MESH_CRYPTO_TAG_SIZE;
   if (totalEncrypted > MESH_MAX_PAYLOAD) {
     return false;
   }
 
-  // Extract nonce from payload buffer
-  uint8_t nonce[MESH_CRYPTO_NONCE_SIZE];
-  memcpy(nonce, &packet->payload[0], MESH_CRYPTO_NONCE_SIZE);
+  // Extract IV from payload buffer
+  uint8_t iv[MESH_CRYPTO_NONCE_SIZE];
+  memcpy(iv, &packet->payload[0], MESH_CRYPTO_NONCE_SIZE);
 
   // Extract ciphertext
   uint8_t ciphertext[MESH_MAX_PAYLOAD];
@@ -182,28 +184,28 @@ bool MeshCrypto::decryptPayload(MeshPacket* packet) {
   uint8_t aad[MESH_CRYPTO_AAD_SIZE];
   buildAAD(&packet->header, aad);
 
-  // Decrypt and verify with ChaCha20-Poly1305
-  mbedtls_chachapoly_context ctx;
-  mbedtls_chachapoly_init(&ctx);
+  // Decrypt and verify with AES-256-GCM
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
 
-  int ret = mbedtls_chachapoly_setkey(&ctx, _encKey);
+  int ret = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, _encKey, 256);
   if (ret != 0) {
-    mbedtls_chachapoly_free(&ctx);
+    mbedtls_gcm_free(&ctx);
     return false;
   }
 
   uint8_t plaintext[MESH_MAX_PAYLOAD];
-  ret = mbedtls_chachapoly_auth_decrypt(
+  ret = mbedtls_gcm_auth_decrypt(
     &ctx,
     payloadLen,            // ciphertext length
-    nonce,                 // 12-byte nonce
-    aad, MESH_CRYPTO_AAD_SIZE,  // additional authenticated data
-    tag,                   // 16-byte auth tag to verify
+    iv, MESH_CRYPTO_NONCE_SIZE,  // 12-byte IV
+    aad, MESH_CRYPTO_AAD_SIZE,   // additional authenticated data
+    tag, MESH_CRYPTO_TAG_SIZE,   // 16-byte auth tag to verify
     ciphertext,            // input ciphertext
     plaintext              // output plaintext
   );
 
-  mbedtls_chachapoly_free(&ctx);
+  mbedtls_gcm_free(&ctx);
 
   if (ret != 0) {
     // Authentication failed - tampered or wrong key
