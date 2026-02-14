@@ -339,6 +339,13 @@ private:
   uint32_t _msgsDropped;
   uint32_t _messageIdCounter;
 
+  // MAC randomization
+  uint32_t _lastMacRotation;
+  uint8_t _originalMac[6];  // Store original MAC for reference
+
+  // MAC randomization helper
+  void randomizeMac();
+
   // Emergency rate limiting: MAC -> last emergency timestamp
   std::map<uint64_t, uint32_t> _emergencyRateLimit;
 };

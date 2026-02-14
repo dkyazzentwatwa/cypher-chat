@@ -4,6 +4,8 @@
 #include "OutputManager.h"
 #include <cstring>
 #include <algorithm>
+#include <esp_wifi.h>
+#include <esp_random.h>
 
 // ============================================================================
 // MeshPeer Implementation
@@ -60,12 +62,58 @@ MeshManager::MeshManager()
   , _msgsDropped(0)
   , _messageIdCounter(0)
   , _broadcastPeer(nullptr)
+  , _lastMacRotation(0)
 {
   memset(_unitName, 0, sizeof(_unitName));
   memset(_myMac, 0, sizeof(_myMac));
+  memset(_originalMac, 0, sizeof(_originalMac));
   memset(_seenMessages, 0, sizeof(_seenMessages));
   memset(_storeQueue, 0, sizeof(_storeQueue));
   _myGPS = {0, 0, 0, false};
+}
+
+void MeshManager::randomizeMac() {
+#if MESH_MAC_RANDOMIZE
+  uint8_t newMac[6];
+
+  // Generate random bytes using ESP32 hardware RNG
+  uint32_t rand1 = esp_random();
+  uint32_t rand2 = esp_random();
+
+  newMac[0] = (rand1 >> 0) & 0xFF;
+  newMac[1] = (rand1 >> 8) & 0xFF;
+  newMac[2] = (rand1 >> 16) & 0xFF;
+  newMac[3] = (rand2 >> 0) & 0xFF;
+  newMac[4] = (rand2 >> 8) & 0xFF;
+  newMac[5] = (rand2 >> 16) & 0xFF;
+
+#if MESH_MAC_KEEP_OUI
+  // Keep Espressif OUI prefix (24:0A:C4 or other Espressif prefixes)
+  // This is more compatible but less anonymous
+  newMac[0] = _originalMac[0];
+  newMac[1] = _originalMac[1];
+  newMac[2] = _originalMac[2];
+#else
+  // Set locally-administered bit (bit 1 of first byte = 1)
+  // Clear multicast bit (bit 0 of first byte = 0)
+  // This marks MAC as locally-administered rather than globally-unique
+  newMac[0] = (newMac[0] & 0xFC) | 0x02;
+#endif
+
+  // Set the new MAC address
+  esp_err_t err = esp_wifi_set_mac(WIFI_IF_STA, newMac);
+  if (err == ESP_OK) {
+    memcpy(_myMac, newMac, 6);
+    output.print("MeshManager: MAC randomized to ");
+    for (int i = 0; i < 6; i++) {
+      if (i > 0) output.print(":");
+      output.printf("%02X", newMac[i]);
+    }
+    output.println();
+  } else {
+    output.printf("MeshManager: Failed to set random MAC (err=%d)\n", err);
+  }
+#endif
 }
 
 bool MeshManager::begin(const char* unitName, const char* passphrase) {
@@ -92,10 +140,19 @@ bool MeshManager::begin(const char* unitName, const char* passphrase) {
     delay(10);
   }
 
+  // Store original MAC before any randomization
+  WiFi.macAddress(_originalMac);
+
+  // Randomize MAC if enabled (anti-tracking)
+#if MESH_MAC_RANDOMIZE
+  randomizeMac();
+  _lastMacRotation = millis();
+#endif
+
   // Set WiFi channel using new API
   WiFi.setChannel(MESH_CHANNEL);
 
-  // Get our MAC address
+  // Get our (possibly randomized) MAC address
   WiFi.macAddress(_myMac);
 
   // Initialize ESP-NOW using new class-based API
@@ -135,7 +192,16 @@ bool MeshManager::begin(const char* unitName, const char* passphrase) {
   }
   output.println();
 
-  output.printf("Security: ChaCha20-Poly1305 AEAD + HKDF-SHA256 + replay protection\n");
+  output.printf("Security: AES-256-GCM AEAD + HKDF-SHA256 + replay protection\n");
+#if MESH_MAC_RANDOMIZE
+  output.printf("Anti-tracking: MAC randomization enabled");
+#if MESH_MAC_ROTATE_MS > 0
+  output.printf(" (rotating every %d min)", MESH_MAC_ROTATE_MS / 60000);
+#else
+  output.printf(" (boot-only)");
+#endif
+  output.println();
+#endif
 
   // Send initial heartbeat to announce presence
   sendHeartbeat();
@@ -222,6 +288,24 @@ void MeshManager::update() {
 
   unsigned long now = millis();
 
+  // Periodic MAC rotation for anti-tracking
+#if MESH_MAC_RANDOMIZE && (MESH_MAC_ROTATE_MS > 0)
+  if (now - _lastMacRotation >= MESH_MAC_ROTATE_MS) {
+    output.println("MeshManager: Rotating MAC address for anti-tracking...");
+
+    // Randomize MAC
+    randomizeMac();
+    _lastMacRotation = now;
+
+    // Re-register broadcast peer with new MAC context
+    // (ESP-NOW peers from our old MAC won't work, but we still receive via onNewPeer callback)
+
+    // Send immediate heartbeat to announce new MAC to peers
+    // Peers will learn our new MAC + unitName association
+    sendHeartbeat();
+  }
+#endif
+
   // Send periodic heartbeat
   if (now - _lastHeartbeat >= MESH_HEARTBEAT_MS) {
     sendHeartbeat();
@@ -267,7 +351,7 @@ uint32_t MeshManager::broadcast(const uint8_t* data, size_t len, MeshMessageType
   // Copy plaintext payload
   memcpy(packet.payload, data, len);
 
-  // Encrypt payload (AEAD: ChaCha20-Poly1305)
+  // Encrypt payload (AEAD: AES-256-GCM)
   if (!MeshCrypto::encryptPayload(&packet)) {
     output.println("MeshManager: Failed to encrypt packet");
     return 0;

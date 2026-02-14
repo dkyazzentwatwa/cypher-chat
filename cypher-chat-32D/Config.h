@@ -114,15 +114,20 @@ extern const char* BUTTON_LABELS[];
                                       // Uses Nordic UART Service - works with nRF Connect, Bluefruit apps
 
 // -- MESH NETWORKING (ESP-NOW) --
-#define MESH_ENABLED true         
-#define MESH_CHANNEL 1            
-#define MESH_MAX_PEERS 20         
-#define MESH_DEFAULT_TTL 3        
-#define MESH_MAX_TTL 5            
-#define MESH_HEARTBEAT_MS 15000   
-#define MESH_PEER_TIMEOUT_MS 60000 
-#define MESH_STORE_QUEUE_SIZE 32  
-#define MESH_MSG_EXPIRE_MS 300000 
+#define MESH_ENABLED true
+#define MESH_CHANNEL 1
+#define MESH_MAX_PEERS 20
+#define MESH_DEFAULT_TTL 3
+#define MESH_MAX_TTL 5
+#define MESH_HEARTBEAT_MS 15000
+#define MESH_PEER_TIMEOUT_MS 60000
+#define MESH_STORE_QUEUE_SIZE 32
+#define MESH_MSG_EXPIRE_MS 300000
+
+// -- MAC RANDOMIZATION (Anti-Tracking) --
+#define MESH_MAC_RANDOMIZE true           // Randomize MAC to prevent tracking
+#define MESH_MAC_ROTATE_MS 300000         // Rotate MAC every 5 minutes (0 = only on boot)
+#define MESH_MAC_KEEP_OUI false           // Keep Espressif OUI prefix (less anonymous but more compatible) 
 
 // -- BLE SETTINGS --
 #define BLE_ENABLED false 
