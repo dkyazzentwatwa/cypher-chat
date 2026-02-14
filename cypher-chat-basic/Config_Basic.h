@@ -3,7 +3,7 @@
 #include <Arduino.h>
 
 /**
- * STARBEAM BASIC - Minimal ESP32 Configuration
+ * CYPHER-CHAT BASIC - Minimal ESP32 Configuration
  *
  * Designed for bare ESP32 boards ($3-5) with no additional hardware.
  * Connects via USB Serial or Bluetooth Serial (BLE UART).
@@ -13,7 +13,7 @@
  */
 
 // -- PROJECT IDENTIFICATION --
-#define PROJECT_NAME "STARBEAM_BASIC"
+#define PROJECT_NAME "CYPHER-CHAT_BASIC"
 #define DEFAULT_UNIT_NAME "BASIC_NODE"
 #define DEFAULT_PASSPHRASE "123456"
 

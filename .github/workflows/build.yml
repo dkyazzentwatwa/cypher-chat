@@ -13,4 +13,4 @@ jobs:
       - run: arduino-cli core update-index
       - run: arduino-cli core install esp32:esp32
       - run: arduino-cli lib install "NimBLE-Arduino" "Adafruit GFX Library" "Adafruit SSD1306"
-      - run: arduino-cli compile --fqbn esp32:esp32:esp32 Bleeper.ino
+      - run: arduino-cli compile --fqbn esp32:esp32:esp32 cypher-chat.ino

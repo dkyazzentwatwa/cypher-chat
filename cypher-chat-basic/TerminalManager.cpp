@@ -1218,7 +1218,7 @@ void TerminalManager::displayMonitorDashboard() {
   }
 
   output.println("================================================");
-  output.println(" STARBEAM BASIC - LIVE MONITOR                  ");
+  output.println(" CYPHER-CHAT BASIC - LIVE MONITOR                  ");
   output.println("================================================");
 
   // Status line
@@ -1275,7 +1275,7 @@ void TerminalManager::printBanner() {
 
   output.println();
   output.println("================================================");
-  output.println("    STARBEAM BASIC - Emergency Communication    ");
+  output.println("    CYPHER-CHAT BASIC - Emergency Communication    ");
   output.println("    ESP32 Headless Terminal Interface           ");
   output.println("================================================");
 }
@@ -1286,7 +1286,7 @@ void TerminalManager::printPrompt() {
 
 void TerminalManager::printStatus() {
   output.println("\n================================================");
-  output.println("  STARBEAM BASIC - Status");
+  output.println("  CYPHER-CHAT BASIC - Status");
   output.println("================================================");
 
   // Role and unit
