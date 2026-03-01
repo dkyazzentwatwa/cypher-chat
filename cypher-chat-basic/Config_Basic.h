@@ -14,8 +14,11 @@
 
 // -- PROJECT IDENTIFICATION --
 #define PROJECT_NAME "CYPHER-CHAT_BASIC"
-#define DEFAULT_UNIT_NAME "BASIC_NODE"
-#define DEFAULT_PASSPHRASE "123456"
+#define DEFAULT_UNIT_NAME "cypher-node"
+// SECURITY: No default passphrase - user MUST set one on first boot
+// Fallback marker for unconfigured state (will be rejected if used)
+#define DEFAULT_PASSPHRASE ""
+#define INSECURE_DEFAULT_PASSPHRASE "123456"  // Blocked if user tries to set this
 
 // -- RUNTIME CONFIGURATION --
 extern String unitName;
@@ -27,7 +30,7 @@ extern bool isServer;
 #define MIN_MESSAGE_SIZE 5
 #define MAX_UNIT_NAME_LEN 16
 #define MAX_PASSPHRASE_LEN 64
-#define MIN_PASSPHRASE_LEN 4
+#define MIN_PASSPHRASE_LEN 8  // Minimum 8 characters for security
 
 // -- MESH CRYPTO PROTOCOL --
 #define MESH_PROTOCOL_VERSION 0x02
@@ -40,6 +43,10 @@ extern bool isServer;
 #define TERMINAL_DEFAULT_MODE TERM_NORMAL
 #define TERMINAL_UPDATE_INTERVAL_MS 1000
 #define TERMINAL_BANNER_ENABLED true
+
+// -- PASSPHRASE INPUT --
+#define PASSPHRASE_INPUT_TIMEOUT_MS 60000   // Time to wait for passphrase input (60s default)
+#define PASSPHRASE_REMINDER_INTERVAL_MS 10000  // Remind user every 10 seconds
 
 // -- BLE UART (Nordic UART Service) --
 #define BLE_UART_ENABLED true         // Enable BLE UART for wireless terminal access

@@ -287,10 +287,27 @@ void handleButtons() {
   // Regular button presses handled by Client/Server loops
 }
 
+// Helper to validate passphrase security
+bool isPassphraseSecure(const char* passphrase) {
+  if (!passphrase) return false;
+  size_t len = strlen(passphrase);
+
+  // Reject if too short
+  if (len < MIN_PASSPHRASE_LEN) return false;
+
+  // Reject known insecure passphrases
+  if (strcmp(passphrase, INSECURE_DEFAULT_PASSPHRASE) == 0) return false;
+  if (strcmp(passphrase, "password") == 0) return false;
+  if (strcmp(passphrase, "12345678") == 0) return false;
+  if (strcmp(passphrase, "00000000") == 0) return false;
+
+  return true;
+}
+
 void configurePassphrase() {
   // Check NVS for saved passphrase first
   char saved[65] = {0};
-  if (MeshCrypto::loadPassphrase(saved, sizeof(saved)) && strlen(saved) >= MIN_PASSPHRASE_LEN) {
+  if (MeshCrypto::loadPassphrase(saved, sizeof(saved)) && isPassphraseSecure(saved)) {
     strncpy(currentPassphrase, saved, sizeof(currentPassphrase) - 1);
     currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
     output.println("Loaded saved passphrase from NVS");
@@ -299,25 +316,55 @@ void configurePassphrase() {
     return;
   }
 
-  oledPrint("Enter passphrase", "Serial (15s timeout)");
-  output.println("Enter mesh passphrase (min 4 chars, or Enter for default):");
+  // SECURITY: Require user to set a passphrase - no insecure defaults
+  oledPrint("SETUP REQUIRED", "Set passphrase");
+  output.println("\n╔════════════════════════════════════════════════╗");
+  output.println("║      SECURITY: Passphrase Required             ║");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.printf("\nEnter mesh passphrase (min %d characters):\n", MIN_PASSPHRASE_LEN);
+  output.println("NOTE: '123456' and common passwords are BLOCKED");
+  output.printf("Timeout: %d seconds\n\n", PASSPHRASE_INPUT_TIMEOUT_MS / 1000);
 
   unsigned long start = millis();
+  unsigned long lastReminder = start;
   String input = "";
+  bool validPassphrase = false;
 
-  while (millis() - start < 15000) {
+  while (!validPassphrase && millis() - start < PASSPHRASE_INPUT_TIMEOUT_MS) {
+    // Periodic reminder
+    if (millis() - lastReminder >= PASSPHRASE_REMINDER_INTERVAL_MS) {
+      int remaining = (PASSPHRASE_INPUT_TIMEOUT_MS - (millis() - start)) / 1000;
+      output.printf("\n[%ds remaining] Enter passphrase: ", remaining);
+      lastReminder = millis();
+    }
+
     if (Serial.available()) {
       char c = Serial.read();
-      if (c == '\n' || c == '\r') break;
-      if (c >= 0x20 && c < 0x7F && input.length() < MAX_PASSPHRASE_LEN) {
+      if (c == '\n' || c == '\r') {
+        output.println();
+
+        // Validate input
+        if (input.length() < MIN_PASSPHRASE_LEN) {
+          output.printf("Too short (min %d chars). Try again: ", MIN_PASSPHRASE_LEN);
+          input = "";
+          continue;
+        }
+
+        if (!isPassphraseSecure(input.c_str())) {
+          output.println("That passphrase is too common/weak. Try a stronger one: ");
+          input = "";
+          continue;
+        }
+
+        validPassphrase = true;
+      } else if (c >= 0x20 && c < 0x7F && input.length() < MAX_PASSPHRASE_LEN) {
         input += c;
         output.print('*');
       }
     }
   }
-  output.println();
 
-  if (input.length() >= MIN_PASSPHRASE_LEN) {
+  if (validPassphrase) {
     strncpy(currentPassphrase, input.c_str(), sizeof(currentPassphrase) - 1);
     currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
     MeshCrypto::savePassphrase(currentPassphrase);
@@ -325,16 +372,18 @@ void configurePassphrase() {
     oledPrint("Passphrase set", "Saved to device");
     delay(1000);
     return;
-  } else if (input.length() > 0) {
-    output.printf("Too short (min %d chars). Using default.\n", MIN_PASSPHRASE_LEN);
   }
 
-  // Use default passphrase
-  strncpy(currentPassphrase, DEFAULT_PASSPHRASE, sizeof(currentPassphrase) - 1);
-  output.println("Using default passphrase");
-  output.println("WARNING: Default passphrase is insecure! Use 'passphrase' command to change.");
-  oledPrint("Default passphrase", "INSECURE");
-  delay(2000);
+  // Timeout reached without valid passphrase - CRITICAL: Do not use insecure default
+  output.println("\n");
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║  ERROR: Passphrase required for mesh security  ║");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.println("\nDevice will restart in 5 seconds...");
+  output.println("Please enter a secure passphrase on restart.\n");
+  oledPrint("ERROR: No passphrase", "Restarting...");
+  delay(5000);
+  ESP.restart();
 }
 
 void detectRole() {

@@ -98,18 +98,27 @@ public:
   static void loadReplayCounters();
 
   /**
-   * Save passphrase to NVS (derived key hash, not plaintext)
+   * Save passphrase to NVS
+   * Stores: encrypted passphrase + verification hash (NOT plaintext)
+   * Uses a device-unique key derived from ESP32 MAC for encryption
    * @param passphrase Passphrase to save
    */
   static void savePassphrase(const char* passphrase);
 
   /**
    * Load passphrase from NVS
+   * Decrypts stored passphrase and verifies against stored hash
    * @param buffer Output buffer
    * @param bufSize Buffer size
-   * @return true if passphrase was loaded
+   * @return true if passphrase was loaded and verified
    */
   static bool loadPassphrase(char* buffer, size_t bufSize);
+
+  /**
+   * Clear saved passphrase from NVS
+   * Used when user wants to reset passphrase on next boot
+   */
+  static void clearSavedPassphrase();
 
   /**
    * Check if crypto is initialized

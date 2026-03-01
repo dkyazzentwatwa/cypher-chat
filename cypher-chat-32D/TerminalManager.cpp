@@ -447,7 +447,8 @@ void TerminalManager::navigateHistory(int direction) {
   // Show history entry or empty line
   if (historyIndex < historyCount) {
     int idx = historyIndex % TERM_HISTORY_SIZE;
-    strcpy(inputBuffer, history[idx]);
+    strncpy(inputBuffer, history[idx], TERM_MAX_CMD_LEN - 1);
+    inputBuffer[TERM_MAX_CMD_LEN - 1] = '\0';
     inputPos = strlen(inputBuffer);
     Serial.print(inputBuffer);
   } else {
@@ -486,7 +487,8 @@ void TerminalManager::handleTabCompletion() {
   } else if (matchCount == 1) {
     // Single match - complete it
     clearInputLine();
-    strcpy(inputBuffer, matches[0]->name);
+    strncpy(inputBuffer, matches[0]->name, TERM_MAX_CMD_LEN - 1);
+    inputBuffer[TERM_MAX_CMD_LEN - 1] = '\0';
     inputPos = strlen(inputBuffer);
     Serial.print(inputBuffer);
 

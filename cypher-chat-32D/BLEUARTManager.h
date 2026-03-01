@@ -73,6 +73,12 @@ public:
    */
   const char* getClientName() const;
 
+  /**
+   * Get current BLE pairing PIN
+   * @return 6-digit PIN for this boot session
+   */
+  static uint32_t getPairingPIN();
+
 private:
   NimBLEServer* _pServer;
   NimBLEService* _pService;

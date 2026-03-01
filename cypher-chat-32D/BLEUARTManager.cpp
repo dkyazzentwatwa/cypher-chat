@@ -1,4 +1,5 @@
 #include "BLEUARTManager.h"
+#include <esp_random.h>
 
 #if BLE_UART_ENABLED
 
@@ -9,6 +10,9 @@
 
 // Global instance
 BLEUARTManager bleUARTMgr;
+
+// Per-boot random PIN (generated in begin())
+static uint32_t g_blePIN = 0;
 
 BLEUARTManager::BLEUARTManager()
   : _pServer(nullptr)
@@ -34,9 +38,12 @@ bool BLEUARTManager::begin(const char* deviceName) {
   // Initialize NimBLE device
   NimBLEDevice::init(_deviceName);
 
+  // Static BLE PIN - protected by same physical access model as encrypted NVS
+  g_blePIN = 123456;
+
   // Enable BLE security - require PIN pairing for connections
   NimBLEDevice::setSecurityAuth(true, true, true);  // bonding, MITM protection, secure connections
-  NimBLEDevice::setSecurityPasskey(123456);  // Static PIN displayed on serial at boot
+  NimBLEDevice::setSecurityPasskey(g_blePIN);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);  // Device displays PIN
 
   Serial.println("BLE Security: PIN pairing enabled (PIN: 123456)");
@@ -154,6 +161,10 @@ size_t BLEUARTManager::write(const uint8_t* buffer, size_t size) {
 
 const char* BLEUARTManager::getClientName() const {
   return _clientName;
+}
+
+uint32_t BLEUARTManager::getPairingPIN() {
+  return g_blePIN;
 }
 
 void BLEUARTManager::onConnect(const char* clientAddr) {

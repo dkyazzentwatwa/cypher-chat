@@ -208,10 +208,27 @@ void simulateButtonPress(int buttonIndex) {
 #endif
 }
 
+// Helper to validate passphrase security
+bool isPassphraseSecure(const char* passphrase) {
+  if (!passphrase) return false;
+  size_t len = strlen(passphrase);
+
+  // Reject if too short
+  if (len < MIN_PASSPHRASE_LEN) return false;
+
+  // Reject known insecure passphrases
+  if (strcmp(passphrase, INSECURE_DEFAULT_PASSPHRASE) == 0) return false;
+  if (strcmp(passphrase, "password") == 0) return false;
+  if (strcmp(passphrase, "12345678") == 0) return false;
+  if (strcmp(passphrase, "00000000") == 0) return false;
+
+  return true;
+}
+
 void configurePassphrase() {
   // Try to load saved passphrase from NVS first
   char saved[65];
-  if (MeshCrypto::loadPassphrase(saved, sizeof(saved))) {
+  if (MeshCrypto::loadPassphrase(saved, sizeof(saved)) && isPassphraseSecure(saved)) {
     strncpy(currentPassphrase, saved, sizeof(currentPassphrase) - 1);
     currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
     output.print("Loaded saved passphrase (");
@@ -220,29 +237,54 @@ void configurePassphrase() {
     return;
   }
 
+  // SECURITY: Require user to set a passphrase - no insecure defaults
   output.println("\n╔════════════════════════════════════════════════╗");
-  output.println("║       CYPHER-CHAT BASIC - Initial Setup           ║");
+  output.println("║      SECURITY: Passphrase Required             ║");
   output.println("╚════════════════════════════════════════════════╝");
-  output.println("\nEnter passphrase (min 4 chars, or press Enter for default):");
-  output.println("Timeout: 15 seconds\n");
+  output.printf("\nEnter mesh passphrase (min %d characters):\n", MIN_PASSPHRASE_LEN);
+  output.println("NOTE: '123456' and common passwords are BLOCKED");
+  output.printf("Timeout: %d seconds\n\n", PASSPHRASE_INPUT_TIMEOUT_MS / 1000);
 
   unsigned long start = millis();
+  unsigned long lastReminder = start;
   String input = "";
+  bool validPassphrase = false;
 
-  while (millis() - start < 15000) {
+  while (!validPassphrase && millis() - start < PASSPHRASE_INPUT_TIMEOUT_MS) {
+    // Periodic reminder
+    if (millis() - lastReminder >= PASSPHRASE_REMINDER_INTERVAL_MS) {
+      int remaining = (PASSPHRASE_INPUT_TIMEOUT_MS - (millis() - start)) / 1000;
+      output.printf("\n[%ds remaining] Enter passphrase: ", remaining);
+      lastReminder = millis();
+    }
+
     if (Serial.available()) {
       char c = Serial.read();
-      if (c == '\n' || c == '\r') break;
-      if (isPrintable(c) && input.length() < MAX_PASSPHRASE_LEN) {
+      if (c == '\n' || c == '\r') {
+        output.println();
+
+        // Validate input
+        if (input.length() < MIN_PASSPHRASE_LEN) {
+          output.printf("Too short (min %d chars). Try again: ", MIN_PASSPHRASE_LEN);
+          input = "";
+          continue;
+        }
+
+        if (!isPassphraseSecure(input.c_str())) {
+          output.println("That passphrase is too common/weak. Try a stronger one: ");
+          input = "";
+          continue;
+        }
+
+        validPassphrase = true;
+      } else if (isPrintable(c) && input.length() < MAX_PASSPHRASE_LEN) {
         input += c;
         output.print('*');
       }
     }
   }
-  output.println();
 
-  // Validate passphrase
-  if (input.length() >= MIN_PASSPHRASE_LEN) {
+  if (validPassphrase) {
     strncpy(currentPassphrase, input.c_str(), sizeof(currentPassphrase) - 1);
     currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
     MeshCrypto::savePassphrase(currentPassphrase);
@@ -253,10 +295,15 @@ void configurePassphrase() {
     return;
   }
 
-  // Use default passphrase
-  output.println("Using default passphrase");
-  output.println("(Change with 'passphrase' command)");
-  delay(1000);
+  // Timeout reached without valid passphrase - CRITICAL: Do not use insecure default
+  output.println("\n");
+  output.println("╔════════════════════════════════════════════════╗");
+  output.println("║  ERROR: Passphrase required for mesh security  ║");
+  output.println("╚════════════════════════════════════════════════╝");
+  output.println("\nDevice will restart in 5 seconds...");
+  output.println("Please enter a secure passphrase on restart.\n");
+  delay(5000);
+  ESP.restart();
 }
 
 void setup() {
