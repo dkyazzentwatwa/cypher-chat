@@ -23,7 +23,7 @@ Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET_PIN);
 unsigned long lastButtonPressMillis = 0;
 const int DEBOUNCE_DELAY = 200;
 const int BUTTON_PINS[] = { KEY1_PIN, KEY2_PIN, KEY3_PIN };
-const char* BUTTON_LABELS[] = { "KEY1", "KEY2", "KEY3" };
+const char* BUTTON_LABELS[] = { "ACK", "EMERG", "HELP" };
 
 bool isServer = false;
 String unitName = DEFAULT_UNIT_NAME;
@@ -48,6 +48,9 @@ bool emergencyActive = false;
 unsigned long emergencyStartTime = 0;
 const unsigned long EMERGENCY_DURATION = 30000; // 30 seconds
 
+// Forward declaration
+void simulateButtonPress(int buttonIndex);
+
 // Mesh networking callbacks
 #if MESH_ENABLED
 void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi) {
@@ -67,6 +70,11 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
 
   // Handle by message type
   if (packet->header.type == MESH_MSG_EMERGENCY) {
+    if (packet->header.payloadLen < 1) {
+      output.println("Mesh RX: Invalid emergency payload (missing flags byte)");
+      return;
+    }
+
     // Parse emergency payload: [flags:1][gps:12?][msg:variable]
     uint8_t flags = packet->payload[0];
     size_t offset = 1;
@@ -81,9 +89,16 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
       memcpy(&gps.altitude, &packet->payload[offset], 4);
       offset += 4;
       gps.valid = true;
+    } else if (flags & 0x01) {
+      output.println("Mesh RX: Invalid emergency payload (truncated GPS)");
+      return;
     }
 
     // Extract message
+    if (offset > packet->header.payloadLen) {
+      output.println("Mesh RX: Invalid emergency payload (offset overflow)");
+      return;
+    }
     size_t msgLen = packet->header.payloadLen - offset;
     if (msgLen > sizeof(msg) - 1) msgLen = sizeof(msg) - 1;
     memcpy(msg, &packet->payload[offset], msgLen);
@@ -256,24 +271,23 @@ void handleButtons() {
   if (event == BUTTON_NONE) return;
 
   if (event == BUTTON_PRESS) {
-    if (buttonIndex == 2) {
-      // Button 3 (index 2): Cycle OLED screens
-      DisplayScreen current = displayMgr.getCurrentScreen();
-      if (current == SCREEN_STATUS) displayMgr.setScreen(SCREEN_MESSAGES);
-      else if (current == SCREEN_MESSAGES) displayMgr.setScreen(SCREEN_HISTORY);
-      else displayMgr.setScreen(SCREEN_STATUS);
-      
-      output.println("Screen cycled via Button 3");
+    if (buttonIndex == 0 || buttonIndex == 2) {
+      // KEY1 / KEY3 short-press: send quick message (ACK/HELP)
+      simulateButtonPress(buttonIndex);
+      return;
+    } else if (buttonIndex == 1) {
+      // KEY2 short-press: local emergency state indicator
+      output.println("KEY2 short press: hold KEY2 to trigger emergency");
       beep();
       return;
     }
   }
 
   if (event == BUTTON_LONG_PRESS) {
-    if (buttonIndex == 2) {
-      // Button 3 long-press: Trigger emergency
+    if (buttonIndex == 1) {
+      // KEY2 long-press: Trigger emergency (swapped with KEY3)
       if (!emergencyActive) {
-        output.println("Emergency broadcast triggered (Button 3 long-press)");
+        output.println("Emergency broadcast triggered (KEY2 long-press)");
         broadcastEmergency();
       }
     } else if (buttonIndex == 0) {
@@ -484,7 +498,9 @@ void setup() {
 
   // Initialize BLE UART service with unit name (after detectRole sets it)
 #if BLE_UART_ENABLED
-  bleUARTMgr.begin(unitName.c_str());
+  if (!bleUARTMgr.begin(unitName.c_str())) {
+    output.println("WARNING: BLE UART init failed; continuing without BLE");
+  }
 #endif
 
   // Print configuration to terminal
@@ -526,6 +542,11 @@ void setup() {
 void loop() {
   // Poll terminal for commands (non-blocking)
   terminalMgr.poll();
+
+#if BLE_UART_ENABLED
+  // Flush queued BLE notifications from main loop context
+  bleUARTMgr.pollTx();
+#endif
 
   // Handle emergency state
   handleEmergency();

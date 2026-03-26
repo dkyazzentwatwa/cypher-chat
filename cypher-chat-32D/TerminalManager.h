@@ -115,6 +115,10 @@ private:
 
   // Input processing (non-blocking)
   InputSource _lastInputSource;  // Track last input source for correct echo
+  InputSource _activeInputSource;
+  bool _hasInputOwner;
+  unsigned long _lastInputOwnerMs;
+  static const unsigned long INPUT_OWNER_TIMEOUT_MS = 300;
   void processInput(char c, InputSource source);  // Process character from either source
   void processCommand(const char* cmd);
   void parseCommand(const char* cmd, char* verb, char* args);
@@ -167,6 +171,7 @@ private:
   // Command handlers - Configuration
   void cmdName(const char* newName);
   void cmdPassphrase(const char* newPhrase);
+  void cmdBLEPin(const char* args);
   void cmdNewKey(const char* args);
   void cmdMode(const char* modeStr);
   void cmdAnsi(const char* args);

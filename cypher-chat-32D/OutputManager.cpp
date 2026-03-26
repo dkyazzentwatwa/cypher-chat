@@ -1,8 +1,71 @@
 #include "OutputManager.h"
 #include <stdarg.h>
+#include <ctype.h>
 
 #if BLE_UART_ENABLED
 #include "BLEUARTManager.h"
+
+static bool isAnsiTerminator(char c) {
+  return (c >= '@' && c <= '~');
+}
+
+static size_t writeBLESanitizedBytes(const uint8_t* data, size_t len) {
+  if (!data || len == 0 || !bleUARTMgr.isConnected()) return 0;
+  char bleBuffer[256];
+  size_t bleLen = 0;
+  size_t written = 0;
+  bool inAnsi = false;
+  char prevOut = 0;
+
+  for (size_t idx = 0; idx < len; ++idx) {
+    char c = (char)data[idx];
+
+    if (inAnsi) {
+      if (isAnsiTerminator(c)) {
+        inAnsi = false;
+      }
+      continue;
+    }
+
+    if (c == '\033' || c == '\x1b') {
+      inAnsi = true;
+      continue;
+    }
+
+    if (c == '\n') {
+      if (prevOut != '\r' && bleLen < sizeof(bleBuffer) - 1) {
+        bleBuffer[bleLen++] = '\r';
+      }
+      if (bleLen < sizeof(bleBuffer) - 1) {
+        bleBuffer[bleLen++] = '\n';
+        prevOut = '\n';
+      }
+    } else if (c == '\r' || c == '\t' || (unsigned char)c >= 0x20) {
+      if (bleLen < sizeof(bleBuffer) - 1) {
+        bleBuffer[bleLen++] = c;
+        prevOut = c;
+      }
+    } else {
+      continue;
+    }
+
+    if (bleLen >= sizeof(bleBuffer) - 2) {
+      written += bleUARTMgr.write((const uint8_t*)bleBuffer, bleLen);
+      bleLen = 0;
+      prevOut = 0;
+    }
+  }
+
+  if (bleLen > 0) {
+    written += bleUARTMgr.write((const uint8_t*)bleBuffer, bleLen);
+  }
+  return written;
+}
+
+static size_t writeBLESanitized(const char* str) {
+  if (!str) return 0;
+  return writeBLESanitizedBytes((const uint8_t*)str, strlen(str));
+}
 #endif
 
 // Global instance
@@ -30,30 +93,10 @@ size_t OutputManager::print(const char* str) {
     bytesWritten = Serial.print(str);
   }
 
-  // Write to Bluetooth Serial (strip ANSI codes for better mobile compatibility)
+  // Write to Bluetooth Serial (strip ANSI/control sequences for better mobile compatibility)
 #if BLE_UART_ENABLED
   if (_btEnabled && bleUARTMgr.isConnected()) {
-    // Build buffer with ANSI codes stripped, then send in one batch
-    char bleBuffer[256];
-    size_t bleLen = 0;
-
-    const char* p = str;
-    while (*p && bleLen < sizeof(bleBuffer) - 1) {
-      if (*p == '\033' || *p == '\x1b') {  // ESC character
-        // Skip until we find a letter (end of ANSI sequence)
-        p++;
-        if (*p == '[') p++;  // Skip [
-        while (*p && !isalpha(*p)) p++;
-        if (*p) p++;  // Skip the final letter
-      } else {
-        bleBuffer[bleLen++] = *p++;
-      }
-    }
-
-    // Send the entire buffer in one bulk write
-    if (bleLen > 0) {
-      bleUARTMgr.write((const uint8_t*)bleBuffer, bleLen);
-    }
+    writeBLESanitized(str);
   }
 #endif
 
@@ -63,7 +106,10 @@ size_t OutputManager::print(const char* str) {
 size_t OutputManager::print(char c) {
   if (_usbEnabled) Serial.print(c);
 #if BLE_UART_ENABLED
-  if (_btEnabled && bleUARTMgr.isConnected()) bleUARTMgr.write(c);
+  if (_btEnabled && bleUARTMgr.isConnected()) {
+    char buf[2] = {c, '\0'};
+    writeBLESanitized(buf);
+  }
 #endif
   return 1;
 }
@@ -74,7 +120,7 @@ size_t OutputManager::print(int n) {
   if (_btEnabled && bleUARTMgr.isConnected()) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%d", n);
-    bleUARTMgr.write((const uint8_t*)buf, strlen(buf));
+    writeBLESanitized(buf);
   }
 #endif
   return 1;
@@ -86,7 +132,7 @@ size_t OutputManager::print(unsigned int n) {
   if (_btEnabled && bleUARTMgr.isConnected()) {
     char buf[16];
     snprintf(buf, sizeof(buf), "%u", n);
-    bleUARTMgr.write((const uint8_t*)buf, strlen(buf));
+    writeBLESanitized(buf);
   }
 #endif
   return 1;
@@ -98,7 +144,7 @@ size_t OutputManager::print(long n) {
   if (_btEnabled && bleUARTMgr.isConnected()) {
     char buf[24];
     snprintf(buf, sizeof(buf), "%ld", n);
-    bleUARTMgr.write((const uint8_t*)buf, strlen(buf));
+    writeBLESanitized(buf);
   }
 #endif
   return 1;
@@ -110,7 +156,7 @@ size_t OutputManager::print(unsigned long n) {
   if (_btEnabled && bleUARTMgr.isConnected()) {
     char buf[24];
     snprintf(buf, sizeof(buf), "%lu", n);
-    bleUARTMgr.write((const uint8_t*)buf, strlen(buf));
+    writeBLESanitized(buf);
   }
 #endif
   return 1;
@@ -124,7 +170,6 @@ size_t OutputManager::print(const __FlashStringHelper* f) {
   if (_usbEnabled) Serial.print(f);
 #if BLE_UART_ENABLED
   if (_btEnabled && bleUARTMgr.isConnected()) {
-    // Build buffer from flash string, then send in one batch
     char bleBuffer[256];
     size_t bleLen = 0;
 
@@ -134,9 +179,9 @@ size_t OutputManager::print(const __FlashStringHelper* f) {
       bleBuffer[bleLen++] = c;
     }
 
-    // Send the entire buffer in one bulk write
     if (bleLen > 0) {
-      bleUARTMgr.write((const uint8_t*)bleBuffer, bleLen);
+      bleBuffer[bleLen] = '\0';
+      writeBLESanitized(bleBuffer);
     }
   }
 #endif
@@ -158,8 +203,7 @@ size_t OutputManager::println(const char* str) {
   // Write newline to Bluetooth Serial
 #if BLE_UART_ENABLED
   if (_btEnabled && bleUARTMgr.isConnected()) {
-    bleUARTMgr.write('\r');
-    bleUARTMgr.write('\n');
+    writeBLESanitized("\r\n");
   }
 #endif
 
@@ -235,7 +279,8 @@ size_t OutputManager::write(uint8_t c) {
   // Write to Bluetooth Serial
 #if BLE_UART_ENABLED
   if (_btEnabled && bleUARTMgr.isConnected()) {
-    bleUARTMgr.write(c);
+    char buf[2] = {(char)c, '\0'};
+    writeBLESanitized(buf);
   }
 #endif
 
@@ -255,7 +300,7 @@ size_t OutputManager::write(const uint8_t* buffer, size_t size) {
   // Write to Bluetooth Serial
 #if BLE_UART_ENABLED
   if (_btEnabled && bleUARTMgr.isConnected()) {
-    bleUARTMgr.write(buffer, size);
+    writeBLESanitizedBytes(buffer, size);
   }
 #endif
 

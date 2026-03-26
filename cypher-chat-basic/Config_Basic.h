@@ -14,7 +14,7 @@
 
 // -- PROJECT IDENTIFICATION --
 #define PROJECT_NAME "CYPHER-CHAT_BASIC"
-#define DEFAULT_UNIT_NAME "cypher-node"
+#define DEFAULT_UNIT_NAME "cypher-basic"
 // SECURITY: No default passphrase - user MUST set one on first boot
 // Fallback marker for unconfigured state (will be rejected if used)
 #define DEFAULT_PASSPHRASE ""
@@ -50,10 +50,19 @@ extern bool isServer;
 
 // -- BLE UART (Nordic UART Service) --
 #define BLE_UART_ENABLED true         // Enable BLE UART for wireless terminal access
+#define BLE_PIN_DEFAULT 123456        // Transitional default - change using `blepin <6digits>`
+#define BLE_PIN_MIN 100000
+#define BLE_PIN_MAX 999999
+#define BLE_TX_QUEUE_BYTES 2048       // Buffered BLE TX queue to prevent interleaved writes
+#define BLE_TX_FLUSH_INTERVAL_MS 30   // Flush interval - iOS needs 20-30ms between batches
+#define BLE_TX_BURST_MAX 240          // Max bytes sent per loop flush
+#define BLE_TERMINAL_CLEAN_LINE_MODE true
+#define BLE_RX_DEBUG true             // Verbose BLE RX logging (diagnostic)
 
 // -- MESH NETWORKING (ESP-NOW) --
 #define MESH_ENABLED true
 #define MESH_CHANNEL 1
+#define MESH_WIFI_START_TIMEOUT_MS 5000  // Timeout waiting for WiFi STA startup
 #define MESH_MAX_PEERS 20
 #define MESH_DEFAULT_TTL 3
 #define MESH_MAX_TTL 5

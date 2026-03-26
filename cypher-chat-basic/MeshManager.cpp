@@ -34,8 +34,8 @@ static const uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 // Callback for ESP-NOW new peer packets (declared as friend in MeshManager.h)
 void onNewPeerPacket(const esp_now_recv_info_t *info, const uint8_t *data, int len, void *arg) {
   MeshManager *manager = static_cast<MeshManager*>(arg);
-  if (manager) {
-    manager->handlePeerReceive(info->src_addr, data, len);
+  if (manager && info && len > 0) {
+    manager->handlePeerReceive(info->src_addr, data, (size_t)len);
   }
 }
 
@@ -80,15 +80,25 @@ bool MeshManager::begin(const char* unitName, const char* passphrase) {
   // Initialize crypto with passphrase (HKDF key derivation)
   if (!MeshCrypto::init(passphrase)) {
     output.println("MeshManager: Crypto init failed");
+    WiFi.mode(WIFI_OFF);
     return false;
   }
+
+  // Clear replay counters on each boot to prevent false replay detection
+  // when peers reboot and restart their messageId sequences
+  MeshCrypto::clearReplayCounters();
 
   // Initialize WiFi in station mode (required for ESP-NOW)
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
   // Wait for WiFi to start
+  unsigned long wifiStart = millis();
   while (!WiFi.STA.started()) {
+    if (millis() - wifiStart > MESH_WIFI_START_TIMEOUT_MS) {
+      output.println("MeshManager: WiFi STA start timeout");
+      return false;
+    }
     delay(10);
   }
 
@@ -135,7 +145,7 @@ bool MeshManager::begin(const char* unitName, const char* passphrase) {
   }
   output.println();
 
-  output.printf("Security: ChaCha20-Poly1305 AEAD + HKDF-SHA256 + replay protection\n");
+  output.printf("Security: AES-256-GCM AEAD + HKDF-SHA256 + replay protection\n");
 
   // Send initial heartbeat to announce presence
   sendHeartbeat();
@@ -199,15 +209,32 @@ MeshPeer* MeshManager::findOrCreatePeer(const uint8_t* mac) {
 }
 
 void MeshManager::handlePeerReceive(const uint8_t* senderMac, const uint8_t* data, size_t len) {
-  if (!_running || !data || len < sizeof(MeshHeader)) {
+  if (!_running || !senderMac || !data || len < sizeof(MeshHeader)) {
     return;
   }
 
-  const MeshPacket* packet = reinterpret_cast<const MeshPacket*>(data);
+  const MeshHeader* header = reinterpret_cast<const MeshHeader*>(data);
+  if (header->payloadLen > MESH_MAX_PLAINTEXT) {
+    _msgsDropped++;
+    output.printf("MeshManager: Drop invalid packet (payloadLen=%u)\n", header->payloadLen);
+    return;
+  }
+
+  size_t expectedLen = sizeof(MeshHeader) + MESH_CRYPTO_NONCE_SIZE + header->payloadLen + MESH_CRYPTO_TAG_SIZE;
+  if (len != expectedLen || expectedLen > sizeof(MeshPacket)) {
+    _msgsDropped++;
+    output.printf("MeshManager: Drop malformed packet (len=%u expected=%u)\n",
+                  (unsigned)len, (unsigned)expectedLen);
+    return;
+  }
+
+  MeshPacket packet;
+  memset(&packet, 0, sizeof(packet));
+  memcpy(&packet, data, expectedLen);
 
   // RSSI is not provided via the class-based API callbacks.
   int8_t rssi = -50;
-  processPacket(packet, senderMac, rssi);
+  processPacket(&packet, senderMac, rssi);
 }
 
 void MeshManager::handlePeerSent(const uint8_t* peerMac, bool success) {
@@ -267,7 +294,7 @@ uint32_t MeshManager::broadcast(const uint8_t* data, size_t len, MeshMessageType
   // Copy plaintext payload
   memcpy(packet.payload, data, len);
 
-  // Encrypt payload (AEAD: ChaCha20-Poly1305)
+  // Encrypt payload (AEAD: AES-256-GCM)
   if (!MeshCrypto::encryptPayload(&packet)) {
     output.println("MeshManager: Failed to encrypt packet");
     return 0;

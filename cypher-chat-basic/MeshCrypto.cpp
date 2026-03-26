@@ -4,6 +4,7 @@
 #include <mbedtls/md.h>
 #include <mbedtls/gcm.h>
 #include <esp_random.h>
+#include <esp_mac.h>
 #include <Preferences.h>
 #include <cstring>
 
@@ -366,25 +367,168 @@ void MeshCrypto::loadReplayCounters() {
   prefs.end();
 }
 
+void MeshCrypto::clearReplayCounters() {
+  _replayCounters.clear();
+}
+
+bool MeshCrypto::deriveStorageKey(uint8_t* keyOut) {
+  if (!keyOut) return false;
+
+  uint8_t mac[6];
+  esp_efuse_mac_get_default(mac);
+
+  const char* salt = "cypher-chat-nvs-key";
+  const char* info = "passphrase-storage";
+
+  const mbedtls_md_info_t* md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!md_info) return false;
+
+  int ret = mbedtls_hkdf(
+    md_info,
+    (const uint8_t*)salt, strlen(salt),
+    mac, 6,
+    (const uint8_t*)info, strlen(info),
+    keyOut, 32
+  );
+
+  return ret == 0;
+}
+
 void MeshCrypto::savePassphrase(const char* passphrase) {
+  if (!passphrase || strlen(passphrase) == 0) return;
+
+  uint8_t storageKey[32];
+  if (!deriveStorageKey(storageKey)) {
+    Serial.println("ERROR: Failed to derive storage key");
+    return;
+  }
+
+  size_t passphraseLen = strlen(passphrase);
+  if (passphraseLen > MAX_PASSPHRASE_LEN) {
+    memset(storageKey, 0, sizeof(storageKey));
+    return;
+  }
+
+  uint8_t iv[12];
+  uint32_t rng1 = esp_random();
+  uint32_t rng2 = esp_random();
+  uint32_t rng3 = esp_random();
+  memcpy(&iv[0], &rng1, 4);
+  memcpy(&iv[4], &rng2, 4);
+  memcpy(&iv[8], &rng3, 4);
+
+  mbedtls_gcm_context ctx;
+  mbedtls_gcm_init(&ctx);
+
+  int ret = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, storageKey, 256);
+  if (ret != 0) {
+    mbedtls_gcm_free(&ctx);
+    memset(storageKey, 0, sizeof(storageKey));
+    return;
+  }
+
+  uint8_t ciphertext[MAX_PASSPHRASE_LEN + 1];
+  uint8_t tag[16];
+  ret = mbedtls_gcm_crypt_and_tag(
+    &ctx,
+    MBEDTLS_GCM_ENCRYPT,
+    passphraseLen,
+    iv, 12,
+    nullptr, 0,
+    (const uint8_t*)passphrase,
+    ciphertext,
+    16,
+    tag
+  );
+
+  mbedtls_gcm_free(&ctx);
+  memset(storageKey, 0, sizeof(storageKey));
+
+  if (ret != 0) {
+    Serial.println("ERROR: Failed to encrypt passphrase for storage");
+    return;
+  }
+
   Preferences prefs;
   prefs.begin("meshcrypto", false);
-  prefs.putString("passphrase", passphrase);
+  prefs.putBytes("pp_iv", iv, 12);
+  prefs.putBytes("pp_tag", tag, 16);
+  prefs.putBytes("pp_enc", ciphertext, passphraseLen);
+  prefs.putUChar("pp_len", (uint8_t)passphraseLen);
+  prefs.remove("passphrase");  // Remove legacy plaintext if present
   prefs.end();
 }
 
 bool MeshCrypto::loadPassphrase(char* buffer, size_t bufSize) {
+  if (!buffer || bufSize == 0) return false;
+
   Preferences prefs;
   prefs.begin("meshcrypto", true);  // Read-only
+
+  // Preferred encrypted format
+  uint8_t storedLen = prefs.getUChar("pp_len", 0);
+  if (storedLen > 0 && storedLen < bufSize && storedLen <= MAX_PASSPHRASE_LEN) {
+    uint8_t iv[12], tag[16], ciphertext[MAX_PASSPHRASE_LEN + 1];
+    prefs.getBytes("pp_iv", iv, 12);
+    prefs.getBytes("pp_tag", tag, 16);
+    prefs.getBytes("pp_enc", ciphertext, storedLen);
+    prefs.end();
+
+    uint8_t storageKey[32];
+    if (!deriveStorageKey(storageKey)) {
+      return false;
+    }
+
+    mbedtls_gcm_context ctx;
+    mbedtls_gcm_init(&ctx);
+    int ret = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, storageKey, 256);
+    if (ret != 0) {
+      mbedtls_gcm_free(&ctx);
+      memset(storageKey, 0, sizeof(storageKey));
+      return false;
+    }
+
+    uint8_t plaintext[MAX_PASSPHRASE_LEN + 1];
+    ret = mbedtls_gcm_auth_decrypt(
+      &ctx,
+      storedLen,
+      iv, 12,
+      nullptr, 0,
+      tag, 16,
+      ciphertext,
+      plaintext
+    );
+    mbedtls_gcm_free(&ctx);
+    memset(storageKey, 0, sizeof(storageKey));
+
+    if (ret != 0) {
+      Serial.println("WARNING: Stored passphrase verification failed");
+      return false;
+    }
+
+    memcpy(buffer, plaintext, storedLen);
+    buffer[storedLen] = '\0';
+    memset(plaintext, 0, sizeof(plaintext));
+    return true;
+  }
+
+  // Legacy plaintext format migration
   String saved = prefs.getString("passphrase", "");
   prefs.end();
 
-  if (saved.length() == 0) {
+  if (saved.length() == 0 || saved.length() >= bufSize || saved.length() > MAX_PASSPHRASE_LEN) {
     return false;
   }
 
   strncpy(buffer, saved.c_str(), bufSize - 1);
   buffer[bufSize - 1] = '\0';
+
+  // Auto-migrate to encrypted format and remove legacy plaintext key
+  savePassphrase(buffer);
+  Preferences writePrefs;
+  writePrefs.begin("meshcrypto", false);
+  writePrefs.remove("passphrase");
+  writePrefs.end();
   return true;
 }
 

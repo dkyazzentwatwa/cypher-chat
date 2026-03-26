@@ -68,6 +68,16 @@ public:
   size_t write(const uint8_t* buffer, size_t size);
 
   /**
+   * Flush queued BLE TX data (call from main loop)
+   */
+  void pollTx();
+
+  /**
+   * Enable/disable BLE clean line mode (filters control sequences)
+   */
+  void setCleanLineMode(bool enabled);
+
+  /**
    * Get client device name (if available)
    * @return client name or empty string
    */
@@ -75,9 +85,22 @@ public:
 
   /**
    * Get current BLE pairing PIN
-   * @return 6-digit PIN for this boot session
+   * @return configured 6-digit PIN
    */
-  static uint32_t getPairingPIN();
+  uint32_t getPairingPIN() const;
+
+  /**
+   * Set BLE pairing PIN and persist to NVS
+   * @param pin 6-digit PIN (100000-999999)
+   * @return true if valid and saved
+   */
+  bool setPairingPIN(uint32_t pin);
+
+  /**
+   * TX queue telemetry
+   */
+  size_t getTxQueuedBytes() const;
+  size_t getTxDroppedBytes() const;
 
 private:
   NimBLEServer* _pServer;
@@ -87,6 +110,7 @@ private:
   NimBLEAdvertising* _pAdvertising;
 
   bool _connected;
+  bool _cleanLineMode;
   char _deviceName[32];
   char _clientName[32];
 
@@ -94,6 +118,14 @@ private:
   uint8_t _rxBuffer[256];
   size_t _rxHead;
   size_t _rxTail;
+
+  // TX queue for buffered notifications (write can be called from multiple contexts)
+  uint8_t _txBuffer[BLE_TX_QUEUE_BYTES];
+  size_t _txHead;
+  size_t _txTail;
+  size_t _txDroppedBytes;
+  unsigned long _lastTxFlushMs;
+  portMUX_TYPE _txMux = portMUX_INITIALIZER_UNLOCKED;
 
   // Server callbacks
   class ServerCallbacks : public NimBLEServerCallbacks {
@@ -125,6 +157,8 @@ private:
   // Data handlers
   void onReceive(const uint8_t* data, size_t len);
   void addToRxBuffer(uint8_t byte);
+  size_t queueTx(const uint8_t* data, size_t len);
+  size_t txQueuedUnsafe() const;
 };
 
 // Global instance

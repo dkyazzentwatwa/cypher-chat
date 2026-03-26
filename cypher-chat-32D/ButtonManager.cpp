@@ -72,7 +72,7 @@ ButtonEvent ButtonManager::updateButton(int buttonIndex) {
 
       state.lastState = currentState;
       state.lastReleaseTime = now;
-      state.pressCount = 1;
+      state.pressCount = 0;
 
       // Check if it was held long enough to be a press (debounce)
       if (pressDuration < DEBOUNCE_TIME_MS) {
@@ -81,12 +81,11 @@ ButtonEvent ButtonManager::updateButton(int buttonIndex) {
 
       // Check if it was a long press
       if (pressDuration >= LONG_PRESS_TIME_MS) {
-        state.pressCount = 0; // Don't trigger double-press after long press
         return BUTTON_LONG_PRESS;
       }
 
-      // Regular press - but don't return yet, wait for possible double-press
-      return BUTTON_NONE;
+      // Regular press - return immediately for responsive UI.
+      return BUTTON_PRESS;
     }
   }
 
@@ -99,12 +98,6 @@ ButtonEvent ButtonManager::updateButton(int buttonIndex) {
       state.pressCount = 0;
       return BUTTON_LONG_PRESS;
     }
-  }
-
-  // Check for single press timeout (double-press window expired)
-  if (state.pressCount > 0 && (now - state.lastReleaseTime) >= DOUBLE_PRESS_WINDOW_MS) {
-    state.pressCount = 0;
-    return BUTTON_PRESS;
   }
 
   return BUTTON_NONE;

@@ -4,6 +4,17 @@
 DisplayManager displayMgr;
 extern TerminalManager terminalMgr;
 
+static const char* screenLabel(DisplayScreen screen) {
+  switch (screen) {
+    case SCREEN_STATUS: return "STAT";
+    case SCREEN_MESSAGES: return "MSGS";
+    case SCREEN_HISTORY: return "HIST";
+    default: return "----";
+  }
+}
+
+static const int kCharsPerLine = 21;
+
 DisplayManager::DisplayManager()
   : currentScreen(SCREEN_STATUS),
     historyCount(0),
@@ -22,6 +33,7 @@ void DisplayManager::begin() {
   currentScreen = SCREEN_STATUS;
   historyCount = 0;
   historyScrollOffset = 0;
+  display.setTextWrap(false);
   updateStatus("Display Ready", "");
 }
 
@@ -80,7 +92,8 @@ void DisplayManager::updateRetryCount(const char* text, int retryCount) {
 }
 
 void DisplayManager::setScreen(DisplayScreen screen) {
-  currentScreen = screen;
+  (void)screen;
+  currentScreen = SCREEN_STATUS;  // Single-screen UI
   historyScrollOffset = 0; // Reset scroll when changing screens
 }
 
@@ -127,18 +140,10 @@ void DisplayManager::refresh() {
   // Always draw status bar
   drawStatusBar();
 
-  // Draw current screen content below status bar
-  switch (currentScreen) {
-    case SCREEN_STATUS:
-      drawStatusScreen();
-      break;
-    case SCREEN_MESSAGES:
-      drawMessagesScreen();
-      break;
-    case SCREEN_HISTORY:
-      drawHistoryScreen();
-      break;
-  }
+  // Single-screen mode for better readability on 0.96" OLEDs.
+  drawStatusScreen();
+
+  drawFooterHints();
 
   display.display();
 }
@@ -148,24 +153,21 @@ void DisplayManager::drawStatusBar() {
   display.fillRect(0, 0, OLED_WIDTH, STATUS_BAR_HEIGHT, SSD1306_WHITE);
   display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
   display.setTextSize(1);
-  display.setCursor(0, 1);
+  display.setCursor(0, 2);
 
   // Connection state abbreviation
   display.print(getStateAbbrev());
+  display.print(" MSG");
 
-  // Retry counter if > 0
-  if (retryCount > 0) {
-    display.print(" R:");
-    display.print(retryCount);
-  }
-
-  // Message count
-  display.print(" M:");
-  display.print(messageCount);
-
-  // Power indicator (wall-powered)
-  display.setCursor(OLED_WIDTH - 24, 1);
-  display.print("PWR");
+  char right[16];
+  snprintf(right, sizeof(right), "M%02d R%02d", messageCount, retryCount);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(right, 0, 0, &x1, &y1, &w, &h);
+  int x = OLED_WIDTH - (int)w - 1;
+  if (x < 52) x = 52;
+  display.setCursor(x, 2);
+  display.print(right);
 
   // Reset text color for content area
   display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
@@ -174,48 +176,22 @@ void DisplayManager::drawStatusBar() {
 void DisplayManager::drawStatusScreen() {
   display.setTextSize(1);
 
-  // Line 1 (below status bar)
-  display.setCursor(0, STATUS_BAR_HEIGHT + 2);
+  // Header lines below status bar
+  display.setCursor(0, STATUS_BAR_HEIGHT + 1);
   display.print(statusLine1);
 
-  // Line 2
-  display.setCursor(0, STATUS_BAR_HEIGHT + 12);
+  display.setCursor(0, STATUS_BAR_HEIGHT + 9);
   display.print(statusLine2);
 
-  // Last message (if any)
-  if (historyCount > 0) {
-    Message& lastMsg = messageHistory[historyCount - 1];
-
-    display.setCursor(0, STATUS_BAR_HEIGHT + 24);
-    display.print("Last msg:");
-
-    display.setCursor(0, STATUS_BAR_HEIGHT + 34);
-
-    // Direction indicator
-    if (lastMsg.isOutgoing) {
-      display.print(lastMsg.isDelivered ? "> " : ">>");
-    } else {
-      display.print("< ");
-    }
-
-    // Truncate message to fit
-    char truncated[20];
-    strncpy(truncated, lastMsg.text, 19);
-    truncated[19] = '\0';
-    display.print(truncated);
-
-    // Timestamp
-    display.setCursor(0, STATUS_BAR_HEIGHT + 44);
-    char timeStr[16];
-    formatTimestamp(lastMsg.timestamp, timeStr, sizeof(timeStr));
-    display.print(timeStr);
-  }
+  display.setCursor(0, STATUS_BAR_HEIGHT + 17);
+  display.print("Last:");
+  drawWrappedLastMessage(STATUS_BAR_HEIGHT + 25, 3);
 }
 
 void DisplayManager::drawMessagesScreen() {
   display.setTextSize(1);
 
-  // Display last 3 messages
+  // Display recent messages
   int startIdx = (historyCount > MESSAGE_DISPLAY_COUNT) ? (historyCount - MESSAGE_DISPLAY_COUNT) : 0;
   int y = STATUS_BAR_HEIGHT + 2;
 
@@ -238,12 +214,17 @@ void DisplayManager::drawMessagesScreen() {
     }
 
     // Message text (truncated)
-    char truncated[20];
-    strncpy(truncated, msg.text, 19);
-    truncated[19] = '\0';
+    char truncated[19];
+    strncpy(truncated, msg.text, 18);
+    truncated[18] = '\0';
     display.print(truncated);
 
-    y += 18; // Space for next message
+    y += 20;
+  }
+
+  if (historyCount == 0) {
+    display.setCursor(0, STATUS_BAR_HEIGHT + 22);
+    display.print("No messages yet");
   }
 }
 
@@ -267,20 +248,90 @@ void DisplayManager::drawHistoryScreen() {
     display.print(" ");
 
     // Message text (truncated)
-    char truncated[18];
-    strncpy(truncated, msg.text, 17);
-    truncated[17] = '\0';
+    char truncated[19];
+    strncpy(truncated, msg.text, 18);
+    truncated[18] = '\0';
     display.print(truncated);
 
-    y += 18;
+    y += 20;
   }
 
   // Scroll indicator
   if (historyCount > MESSAGE_DISPLAY_COUNT) {
-    display.setCursor(OLED_WIDTH - 12, OLED_HEIGHT - 8);
+    display.setCursor(OLED_WIDTH - 20, OLED_HEIGHT - FOOTER_HEIGHT - 1);
     display.print(historyScrollOffset + 1);
     display.print("/");
     display.print(historyCount);
+  } else if (historyCount == 0) {
+    display.setCursor(0, STATUS_BAR_HEIGHT + 22);
+    display.print("History empty");
+  }
+}
+
+void DisplayManager::drawFooterHints() {
+  display.fillRect(0, OLED_HEIGHT - FOOTER_HEIGHT, OLED_WIDTH, FOOTER_HEIGHT, SSD1306_WHITE);
+  display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, OLED_HEIGHT - FOOTER_HEIGHT + 0);
+  display.print("K1 ACK  K2 !  K3 HELP");
+  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+}
+
+void DisplayManager::drawWrappedLastMessage(int yStart, int maxLines) {
+  if (historyCount <= 0) {
+    display.setCursor(0, yStart);
+    display.print("No messages yet");
+    return;
+  }
+
+  const Message& lastMsg = messageHistory[historyCount - 1];
+  char text[MAX_MESSAGE_SIZE];
+  strncpy(text, lastMsg.text, sizeof(text) - 1);
+  text[sizeof(text) - 1] = '\0';
+
+  char prefix[4];
+  if (lastMsg.isOutgoing) {
+    snprintf(prefix, sizeof(prefix), "%s", lastMsg.isDelivered ? "> " : ">>");
+  } else {
+    snprintf(prefix, sizeof(prefix), "< ");
+  }
+
+  int line = 0;
+  int y = yStart;
+  int start = 0;
+  int len = strlen(text);
+
+  while (line < maxLines && start < len) {
+    int remain = len - start;
+    int capacity = (line == 0) ? (kCharsPerLine - (int)strlen(prefix)) : kCharsPerLine;
+    if (capacity < 6) capacity = 6;
+    int take = (remain > capacity) ? capacity : remain;
+
+    if (take < remain) {
+      int split = take;
+      while (split > 6 && text[start + split] != ' ') {
+        split--;
+      }
+      if (split > 6) {
+        take = split;
+      }
+    }
+
+    char lineBuf[24];
+    memset(lineBuf, 0, sizeof(lineBuf));
+    strncpy(lineBuf, &text[start], take);
+    lineBuf[take] = '\0';
+
+    display.setCursor(0, y);
+    if (line == 0) {
+      display.print(prefix);
+    }
+    display.print(lineBuf);
+
+    start += take;
+    while (text[start] == ' ') start++;
+    line++;
+    y += 8;
   }
 }
 
@@ -288,8 +339,8 @@ const char* DisplayManager::getStateAbbrev() {
   switch (connectionState) {
     case STATE_IDLE:        return "IDL";
     case STATE_SCANNING:    return "SCN";
-    case STATE_CONNECTING:  return "CON";
-    case STATE_CONNECTED:   return "CON";
+    case STATE_CONNECTING:  return "CTG";
+    case STATE_CONNECTED:   return "ONL";
     case STATE_DISCONNECTED:return "DIS";
     case STATE_ERROR:       return "ERR";
     default:                return "???";

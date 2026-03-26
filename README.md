@@ -1,50 +1,252 @@
-# cypher-chat
+# 🔐 Cypher Chat
 
-A minimal ESP32-based BLE chat for quick communication in emergencies.
+<div align="center">
 
-## Quick start
-1. Wire an ESP32 with an SSD1306 OLED display, four momentary buttons (pins 32,33,25,26) and an optional buzzer (pin 27).
-2. Install the required libraries: NimBLE-Arduino, Adafruit GFX, and Adafruit SSD1306.
-3. Compile the firmware:
-   ```bash
-   arduino-cli compile --fqbn esp32:esp32:esp32 cypher-chat.ino
-   ```
-4. Upload to at least two devices.
-5. On boot, hold the first button to start **server** mode; otherwise the device runs as a **client**.
-6. When prompted, send a custom BLE passkey over Serial within 10 seconds or the default `123456` is used.
-7. Use the buttons to send preset messages. The OLED and buzzer provide status feedback and delivery acknowledgements.
+[![ESP32](https://img.shields.io/badge/ESP32-DevKitC_V4-blue?style=flat&logo=espressif)](https://www.espressif.com/en/products/esp32)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat)](LICENSE)
+[![Arduino](https://img.shields.io/badge/Arduino-CLI-orange?style=flat&logo=arduino)](https://www.arduino.cc/)
+[![Mesh Networking](https://img.shields.io/badge/ESP--NOW_Mesh-purple?style=flat)](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/network/esp_now.html)
+[![BLE UART](https://img.shields.io/badge/BLE_UART-black?style=flat&logo=bluetooth)](https://www.nordicsemi.com/Products/Development-tools/nrf-connect-for-mobile)
 
-## Features
-- **Mesh Networking (ESP-NOW)**: Multi-hop relay up to 1.25km range (5 hops × 250m)
-- **Wireless Terminal Access**: BLE UART for remote device management from iOS/Android
-- **Comprehensive CLI**: 85 terminal commands across 13 categories
-- **Battery Monitoring**: Real-time voltage and percentage tracking
-- **Power Management**: TX power control, sleep modes for extended battery life
-- **Network Diagnostics**: Ping, traceroute, topology visualization, signal monitoring
-- **Security Features**: Peer blocklist, trust list, HMAC-SHA256 message authentication
-- **Hardware Diagnostics**: Self-test routines for all peripherals
-- **File System Support**: SPIFFS for logs, configuration, and message persistence
-- **GPS Integration**: Optional GPS tagging for emergency broadcasts
-- **Runtime configuration**: BLE passkey, unit name, terminal modes
-- **OLED/buzzer feedback**: Connection status and message delivery
-- **Message history**: Last 10 messages with metadata
+**Off-grid emergency mesh communication for $5 ESP32 boards**
+
+[Quick Start](#-quick-start) • [Features](#-features) • [Hardware](#-hardware-needed) • [Commands](#-commands) • [Security](#-security)
+
+</div>
+
+---
+
+## 🎯 What is Cypher Chat?
+
+Cypher Chat turns cheap ESP32 boards into a **secure mesh communication network** that works without internet, cell towers, or WiFi infrastructure. Perfect for:
+
+- 🏕️ **Outdoor adventures** — Stay connected in the backcountry
+- 🏚️ **Emergency preparedness** — Communication when infrastructure fails
+- 🎓 **Education** — Learn mesh networking, embedded systems
+- 👷 **Field operations** — Team coordination without dependencies
+
+> **$5 ESP32 + zero infrastructure = decentralized mesh chat** 🚀
+
+---
+
+## ⚡ Quick Start
+
+### 1. Install Requirements
+
+```bash
+# macOS
+brew install arduino-cli
+
+# Linux (Debian/Ubuntu)
+sudo apt install arduino-cli
+
+# Windows
+# Download from https://arduino-cli.github.io/
+```
+
+### 2. Setup ESP32 Core
+
+```bash
+arduino-cli core update-index
+arduino-cli core install esp32:esp32@3.x.x
+```
+
+### 3. Install Libraries
+
+```bash
+arduino-cli lib install "NimBLE-Arduino"
+arduino-cli lib install "Adafruit GFX Library"
+arduino-cli lib install "Adafruit SSD1306"
+arduino-cli lib install "Adafruit BusIO"
+```
+
+### 4. Build & Flash
+
+```bash
+# Full version (OLED + buttons)
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app cypher-chat-32D/cypher-chat-32D.ino
+arduino-cli upload -p /dev/cu.SLAB_USBtoUART --fqbn esp32:esp32:esp32:PartitionScheme=huge_app cypher-chat-32D/cypher-chat-32D.ino
+
+# Basic version (terminal only)
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app cypher-chat-basic/cypher-chat-basic.ino
+```
+
+> **Tip:** Find your port with `arduino-cli board list`
+
+---
+
+## 📦 Hardware Needed
+
+| Component | Cost | Notes |
+|-----------|------|-------|
+| ESP32 DevKit C V4 | $5 | Main board |
+| USB-C cable | $3 | Power + programming |
+| OLED Display 128×64 (I2C) | $4 | Optional, 32D only |
+| 3× push buttons | $1 | Optional, 32D only |
+| **Total** | **~$10** | Fully functional |
+
+### Pinout (32D variant)
+
+```
+ESP32 DevKit C V4
+├── GPIO 21 → OLED SDA
+├── GPIO 22 → OLED SCL  
+├── GPIO 39 → Button 1 (ACK)
+├── GPIO 34 → Button 2 (ENROUTE)
+├── GPIO 36 → Button 3 (SOS)
+└── GPIO 35 → Battery ADC (optional)
+```
+
+---
+
+## 🎮 Features
+
+### Mesh Networking
+- **ESP-NOW** — Low-latency peer-to-peer communication
+- **Multi-hop relay** — Up to 5 hops (1.25km+ range)
+- **Auto topology** — Self-healing mesh
+- **MAC randomization** — Anti-tracking protection
+
+### Communication
+- **4 preset messages** — ACK, ENROUTE, NEED HELP, ALL GOOD
+- **Emergency broadcast** — SOS to all peers for 30 seconds
+- **Message history** — Last 10 messages stored
 
 ### Terminal Interface
-The device includes a powerful terminal interface accessible via USB or BLE UART:
-- **85 commands** organized in 13 categories
-- **Tab completion** and command history (UP/DOWN arrows)
-- **4 terminal modes**: Quiet, Normal, Verbose, Monitor
-- **ANSI color support** for better readability
-- **Interactive menus** or command-line mode
+- **85 commands** — Full system control
+- **BLE UART** — Wireless terminal from phone (nRF Connect, Bluefruit)
+- **Tab completion** — Type `hel` → Tab → `help`
+- **ANSI colors** — Easy reading
 
-See [COMMANDS.md](COMMANDS.md) for complete terminal reference.
+### Hardware Support
+- **OLED display** — Status, messages, battery
+- **LED indicators** — TX/RX activity
+- **Battery monitoring** — Voltage + percentage
+- **GPS integration** — Location tagging (optional)
 
-## Emergency workflows
-- **Hub and spokes**: Keep one server device stationary as a relay while multiple clients move around.
-- **Ad-hoc switch**: If the server fails, reboot any client while holding the first button to promote it to server.
+### Security
+- **HMAC-SHA256** — Message authentication
+- **Peer blocklist** — Block malicious nodes
+- **Peer trustlist** — Whitelist trusted devices
+- **BLE PIN** — Custom pairing code
 
-## Security
-Messages are exchanged over BLE. Use unique passkeys for private sessions and consider enabling further encryption if needed.
+---
 
-## Contributing
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on building and submitting changes.
+## 💬 Commands
+
+### Send Messages
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `send 1` | `s 1` | Send ACK |
+| `send 2` | `s 2` | Send ENROUTE |
+| `send 3` | `s 3` | Send NEED HELP |
+| `send 4` | `s 4` | Send ALL GOOD |
+| `emergency` | `sos` | Broadcast SOS to all |
+| `cancel` | | Cancel emergency |
+
+### Network Status
+
+| Command | Description |
+|---------|-------------|
+| `status` | Full system status |
+| `mesh` | Mesh network info |
+| `peers` | Connected peers list |
+| `signal` | Signal strength report |
+
+### Configuration
+
+| Command | Description |
+|---------|-------------|
+| `name <callsign>` | Set unit name |
+| `blepin <6digits>` | Change BLE PIN |
+| `passphrase` | Change mesh key |
+| `quiet` / `verbose` | Terminal mode |
+
+> Run `help` on device for full command list!
+
+---
+
+## 🔒 Security
+
+### First Boot Setup
+On first boot, you'll be prompted to set a **mesh passphrase** (min 8 characters). This key encrypts all mesh traffic.
+
+### BLE Pairing
+Change the default BLE PIN before deployment:
+```
+blepin 847291
+```
+
+### Best Practices
+- Use strong, unique passphrases per network
+- Change BLE PIN from default `123456`
+- Enable blocklist for untrusted peers
+- Rotate keys periodically
+
+---
+
+## 📻 Emergency Workflows
+
+### Hub & Spokes
+```
+Device A (Server) ←→ Device B ←→ Device C ←→ Device D
+     ↑                    ↑              ↑
+  Stationary          Mobile          Mobile
+```
+
+1. Designate one device as **server** (keep stationary)
+2. Other devices auto-relay through mesh
+3. If server fails → promote any client to server
+
+### Ad-Hoc Switch
+If server goes down, hold **Button 1** during reboot to promote that device to server.
+
+---
+
+## 📁 Project Structure
+
+```
+cypher-chat/
+├── cypher-chat-32D/          # Full build (OLED, buttons, buzzer)
+│   ├── cypher-chat-32D.ino  # Main sketch
+│   ├── Config.h              # Hardware configuration
+│   ├── src/                  # Manager classes
+│   └── docs/                 # Setup guides
+├── cypher-chat-basic/        # Minimal build (terminal only)
+│   └── cypher-chat-basic.ino
+├── COMMANDS.md               # Terminal command reference
+├── ARCHITECTURE_PLAN.md      # System design doc
+└── README.md                 # This file
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Coding standards (2-space indent, 100 char lines)
+- Commit message format
+- Pull request process
+
+---
+
+## ⚠️ Disclaimer
+
+This software is provided **as-is** for educational and emergency preparedness purposes. Mesh communication reliability depends on hardware, environment, and configuration. Always have backup communication methods for critical situations.
+
+---
+
+## 📜 License
+
+MIT License — See [LICENSE](LICENSE)
+
+---
+
+<div align="center">
+
+**Built with ❤️ for the mesh community**
+
+[↑ Back to top](#-cypher-chat)
+
+</div>

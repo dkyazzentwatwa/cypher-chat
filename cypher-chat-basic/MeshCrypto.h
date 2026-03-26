@@ -98,7 +98,13 @@ public:
   static void loadReplayCounters();
 
   /**
-   * Save passphrase to NVS (derived key hash, not plaintext)
+   * Clear all replay counters (call on mesh init to prevent false replay detection)
+   */
+  static void clearReplayCounters();
+
+  /**
+   * Save passphrase to NVS
+   * Stores encrypted passphrase envelope (not plaintext)
    * @param passphrase Passphrase to save
    */
   static void savePassphrase(const char* passphrase);
@@ -126,9 +132,12 @@ private:
   // Convert MAC to uint64_t key for map lookup
   static uint64_t macToKey(const uint8_t* mac);
 
+  // Derive a device-unique key for NVS passphrase encryption
+  static bool deriveStorageKey(uint8_t* keyOut);
+
   // State
   static bool _initialized;
-  static uint8_t _encKey[MESH_CRYPTO_KEY_SIZE];       // ChaCha20-Poly1305 key
+  static uint8_t _encKey[MESH_CRYPTO_KEY_SIZE];       // AES-256-GCM key
   static uint8_t _lmkBaseKey[MESH_CRYPTO_LMK_SIZE];   // LMK derivation base
 
   // Replay counter tracking: MAC -> highest seen messageId

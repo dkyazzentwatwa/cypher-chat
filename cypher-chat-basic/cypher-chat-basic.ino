@@ -13,7 +13,7 @@
  * - USB Serial terminal (115200 baud)
  * - Bluetooth Serial terminal (BLE UART - works with phone apps)
  * - ESP-NOW mesh networking (~250m range, multi-hop relay)
- * - ChaCha20-Poly1305 AEAD encryption + HKDF-SHA256 key derivation
+ * - AES-256-GCM AEAD encryption + HKDF-SHA256 key derivation
  *
  * Compatible phone apps:
  * - nRF Connect (iOS/Android)
@@ -68,6 +68,11 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
 
   // Handle by message type
   if (packet->header.type == MESH_MSG_EMERGENCY) {
+    if (packet->header.payloadLen < 1) {
+      output.println("Mesh RX: Invalid emergency payload (missing flags byte)");
+      return;
+    }
+
     // Parse emergency payload: [flags:1][gps:12?][msg:variable]
     uint8_t flags = packet->payload[0];
     size_t offset = 1;
@@ -82,9 +87,16 @@ void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rs
       memcpy(&gps.altitude, &packet->payload[offset], 4);
       offset += 4;
       gps.valid = true;
+    } else if (flags & 0x01) {
+      output.println("Mesh RX: Invalid emergency payload (truncated GPS)");
+      return;
     }
 
     // Extract message
+    if (offset > packet->header.payloadLen) {
+      output.println("Mesh RX: Invalid emergency payload (offset overflow)");
+      return;
+    }
     size_t msgLen = packet->header.payloadLen - offset;
     if (msgLen > sizeof(msg) - 1) msgLen = sizeof(msg) - 1;
     memcpy(msg, &packet->payload[offset], msgLen);
@@ -322,8 +334,11 @@ void setup() {
   // Initialize BLE UART service for phone connectivity
 #if BLE_UART_ENABLED
   output.println("\nStarting Bluetooth (BLE UART)...");
-  bleUARTMgr.begin(unitName.c_str());
-  output.println("BLE UART ready - connect with nRF Connect or similar app");
+  if (bleUARTMgr.begin(unitName.c_str())) {
+    output.println("BLE UART ready - connect with nRF Connect or similar app");
+  } else {
+    output.println("WARNING: BLE UART init failed; continuing without BLE");
+  }
 #endif
 
   // Initialize mesh networking
@@ -353,6 +368,11 @@ void setup() {
 void loop() {
   // Poll terminal for commands
   terminalMgr.poll();
+
+#if BLE_UART_ENABLED
+  // Flush queued BLE notifications from main loop context
+  bleUARTMgr.pollTx();
+#endif
 
   // Handle emergency state
   handleEmergency();

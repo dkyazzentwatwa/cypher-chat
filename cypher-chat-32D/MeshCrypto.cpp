@@ -368,6 +368,10 @@ void MeshCrypto::loadReplayCounters() {
   prefs.end();
 }
 
+void MeshCrypto::clearReplayCounters() {
+  _replayCounters.clear();
+}
+
 // Derive a device-unique storage key from ESP32 MAC + salt
 static bool deriveStorageKey(uint8_t* keyOut) {
   uint8_t mac[6];

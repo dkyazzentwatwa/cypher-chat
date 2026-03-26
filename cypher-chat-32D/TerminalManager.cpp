@@ -16,9 +16,17 @@
 #include "BLEUARTManager.h"
 #endif
 #include <Preferences.h>
+#include <cstdlib>
 
 // Global instance
 TerminalManager terminalMgr;
+
+#if BLE_UART_ENABLED
+static void bleWriteLiteral(const char* s) {
+  if (!s || !bleUARTMgr.isConnected()) return;
+  bleUARTMgr.write((const uint8_t*)s, strlen(s));
+}
+#endif
 
 // External references
 extern String unitName;
@@ -67,6 +75,7 @@ const CommandDesc TerminalManager::commands[] = {
   // Configuration commands (9)
   {"name",        nullptr, "<name>",    "Change unit name",                                     CAT_CONFIG},
   {"passkey",     "pk",    "<6dig>",    "Change passkey (requires restart)",                    CAT_CONFIG},
+  {"blepin",      nullptr, "<6dig>",    "Set BLE pairing PIN (100000-999999)",                  CAT_CONFIG},
   {"mode",        nullptr, "<mode>",    "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
   {"ansi",        nullptr, "<on/off>",  "Enable/disable ANSI colors",                           CAT_CONFIG},
   {"settings",    nullptr, nullptr,     "Show all settings",                                    CAT_CONFIG},
@@ -167,6 +176,14 @@ void TerminalManager::begin() {
   // Initialize escape sequence parser
   escapeState = 0;
   escapePos = 0;
+  _lastInputSource = INPUT_SOURCE_USB;
+  _activeInputSource = INPUT_SOURCE_USB;
+  _hasInputOwner = false;
+  _lastInputOwnerMs = 0;
+
+#if BLE_UART_ENABLED
+  bleUARTMgr.setCleanLineMode(BLE_TERMINAL_CLEAN_LINE_MODE);
+#endif
 
   loadConfig();  // Load saved preferences
 
@@ -240,11 +257,24 @@ void TerminalManager::poll() {
 
 void TerminalManager::processInput(char c, InputSource source) {
   _lastInputSource = source;
+  unsigned long now = millis();
+
+  if (!_hasInputOwner || inputPos == 0 || source == _activeInputSource ||
+      (now - _lastInputOwnerMs) > INPUT_OWNER_TIMEOUT_MS) {
+    _activeInputSource = source;
+    _hasInputOwner = true;
+  }
+
+  if (_hasInputOwner && inputPos > 0 && source != _activeInputSource) {
+    return;
+  }
+  _lastInputOwnerMs = now;
 
   // Determine which stream to echo to (character echo goes back to source only)
   // Command output uses OutputManager and broadcasts to all streams
   bool echoToUSB = (source == INPUT_SOURCE_USB);
   bool echoToBT = (source == INPUT_SOURCE_BT);
+  bool btCleanLine = echoToBT;
 
   if (menuState != MENU_NONE) {
     // Menu mode - single character input
@@ -252,6 +282,14 @@ void TerminalManager::processInput(char c, InputSource source) {
       handleMenuInput(c);
     }
   } else {
+    // BLE clean-line mode ignores escape/control editing sequences.
+    if (echoToBT && c == '\t') {
+      return;
+    }
+    if (echoToBT && c == 0x1B) {
+      return;
+    }
+
     // Handle escape sequences (arrow keys, etc.)
     if (escapeState > 0) {
       handleEscapeSequence(c);
@@ -280,8 +318,7 @@ void TerminalManager::processInput(char c, InputSource source) {
         if (echoToUSB) Serial.println();
 #if BLE_UART_ENABLED
         if (echoToBT) {
-          bleUARTMgr.write('\r');
-          bleUARTMgr.write('\n');
+          bleWriteLiteral("\r\n");
         }
 #endif
 
@@ -289,14 +326,14 @@ void TerminalManager::processInput(char c, InputSource source) {
         processCommand(inputBuffer);
         inputPos = 0;
         browsingHistory = false;
+        _hasInputOwner = false;
         printPrompt();
       } else {
         // Empty line - just print prompt
         if (echoToUSB) Serial.println();
 #if BLE_UART_ENABLED
         if (echoToBT) {
-          bleUARTMgr.write('\r');
-          bleUARTMgr.write('\n');
+          bleWriteLiteral("\r\n");
         }
 #endif
         printPrompt();
@@ -309,9 +346,21 @@ void TerminalManager::processInput(char c, InputSource source) {
         if (echoToUSB) Serial.print("\b \b");
 #if BLE_UART_ENABLED
         if (echoToBT) {
-          bleUARTMgr.write('\b');
-          bleUARTMgr.write(' ');
-          bleUARTMgr.write('\b');
+          if (btCleanLine) {
+            bleWriteLiteral("\r> ");
+            if (inputPos > 0) {
+              bleUARTMgr.write((const uint8_t*)inputBuffer, inputPos);
+            }
+            bleWriteLiteral(" ");
+            bleWriteLiteral("\r> ");
+            if (inputPos > 0) {
+              bleUARTMgr.write((const uint8_t*)inputBuffer, inputPos);
+            }
+          } else {
+            bleUARTMgr.write('\b');
+            bleUARTMgr.write(' ');
+            bleUARTMgr.write('\b');
+          }
         }
 #endif
       }
@@ -320,18 +369,20 @@ void TerminalManager::processInput(char c, InputSource source) {
       if (echoToUSB) Serial.println("^C");
 #if BLE_UART_ENABLED
       if (echoToBT) {
-        bleUARTMgr.write('^');
-        bleUARTMgr.write('C');
-        bleUARTMgr.write('\r');
-        bleUARTMgr.write('\n');
+        bleWriteLiteral("^C\r\n");
       }
 #endif
 
       inputPos = 0;
       browsingHistory = false;
+      _hasInputOwner = false;
       printPrompt();
     } else if (c == 0x0C) {  // Ctrl+L (clear screen)
-      cmdClear();
+      if (echoToUSB) {
+        cmdClear();
+      } else {
+        output.println();
+      }
       printPrompt();
 
       // Reprint current input to source stream
@@ -648,6 +699,8 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
     cmdName(args);
   } else if (strcmp(cmd, "passphrase") == 0 || strcmp(cmd, "passkey") == 0) {
     cmdPassphrase(args);
+  } else if (strcmp(cmd, "blepin") == 0) {
+    cmdBLEPin(args);
   } else if (strcmp(cmd, "mode") == 0) {
     cmdMode(args);
   } else if (strcmp(cmd, "ansi") == 0) {
@@ -920,6 +973,34 @@ void TerminalManager::cmdPassphrase(const char* newPhrase) {
   MeshCrypto::savePassphrase(currentPassphrase);
   output.println("Passphrase updated and saved to NVS.");
   output.println("Note: Restart required to apply new encryption key.");
+}
+
+void TerminalManager::cmdBLEPin(const char* args) {
+#if BLE_UART_ENABLED
+  if (!args || strlen(args) == 0) {
+    output.printf("[BLE] Current pairing PIN: %06lu\n", (unsigned long)bleUARTMgr.getPairingPIN());
+    output.println("[BLE] Usage: blepin <6digits>");
+    return;
+  }
+
+  char* end = nullptr;
+  long pin = strtol(args, &end, 10);
+  if (!end || *end != '\0' || pin < BLE_PIN_MIN || pin > BLE_PIN_MAX) {
+    output.printf("[BLE] Error: PIN must be a 6-digit value (%d-%d)\n", BLE_PIN_MIN, BLE_PIN_MAX);
+    return;
+  }
+
+  if (!bleUARTMgr.setPairingPIN((uint32_t)pin)) {
+    output.println("[BLE] Error: Failed to save BLE PIN");
+    return;
+  }
+
+  output.printf("[BLE] Pairing PIN updated to: %06ld\n", pin);
+  output.println("[BLE] Re-pair clients if they were bonded with the old PIN.");
+#else
+  (void)args;
+  output.println("[BLE] BLE UART is disabled in this build.");
+#endif
 }
 
 void TerminalManager::cmdMode(const char* modeStr) {
@@ -1443,6 +1524,7 @@ void TerminalManager::displayConfigMenu() {
   output.println("║ Use command mode to change settings:           ║");
   output.println("║   name <newname>  - Change unit name           ║");
   output.println("║   passkey <6dig>  - Change passkey             ║");
+  output.println("║   blepin <6dig>   - Set BLE pairing PIN        ║");
   output.println("║   mode <mode>     - Change terminal mode       ║");
   output.println("╠════════════════════════════════════════════════╣");
   output.println("║ [0] Back to Main Menu                          ║");

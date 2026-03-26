@@ -20,7 +20,7 @@ bool PowerManager::begin() {
 #if BATTERY_ENABLED
   // Configure ADC for battery monitoring
   adc1_config_width(ADC_WIDTH_BIT_12);  // 12-bit resolution (0-4095)
-  adc1_config_channel_atten((adc1_channel_t)BATTERY_ADC_PIN, ADC_ATTEN_DB_11);  // 0-3.3V range
+  adc1_config_channel_atten(BATTERY_ADC_CHANNEL, ADC_ATTEN_DB_11);  // 0-3.3V range
 
   // Initial battery reading
   _lastVoltage = readBatteryVoltage();
@@ -179,7 +179,7 @@ float PowerManager::readBatteryVoltage() {
   // Take multiple samples and average
   uint32_t sum = 0;
   for (int i = 0; i < BATTERY_ADC_SAMPLES; i++) {
-    sum += adc1_get_raw((adc1_channel_t)BATTERY_ADC_PIN);
+    sum += adc1_get_raw(BATTERY_ADC_CHANNEL);
     delay(1);
   }
   uint32_t adcValue = sum / BATTERY_ADC_SAMPLES;

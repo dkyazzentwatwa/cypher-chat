@@ -119,10 +119,19 @@ extern const char* BUTTON_LABELS[];
 // -- BLE UART (Nordic UART Service) --
 #define BLE_UART_ENABLED true         // Enable BLE UART for wireless terminal access (iPhone compatible)
                                       // Uses Nordic UART Service - works with nRF Connect, Bluefruit apps
+#define BLE_PIN_DEFAULT 123456        // Transitional default - change using `blepin <6digits>`
+#define BLE_PIN_MIN 100000
+#define BLE_PIN_MAX 999999
+#define BLE_TX_QUEUE_BYTES 2048       // Buffered BLE TX queue to prevent interleaved writes
+#define BLE_TX_FLUSH_INTERVAL_MS 30   // Flush interval - iOS needs 20-30ms between batches
+#define BLE_TX_BURST_MAX 240          // Max bytes sent per loop flush
+#define BLE_TERMINAL_CLEAN_LINE_MODE true
+#define BLE_RX_DEBUG false            // Verbose BLE RX logging
 
 // -- MESH NETWORKING (ESP-NOW) --
 #define MESH_ENABLED true
 #define MESH_CHANNEL 1
+#define MESH_WIFI_START_TIMEOUT_MS 5000  // Timeout waiting for WiFi STA startup
 #define MESH_MAX_PEERS 20
 #define MESH_DEFAULT_TTL 3
 #define MESH_MAX_TTL 5
@@ -146,8 +155,9 @@ extern const char* BUTTON_LABELS[];
 #define GPS_BAUD 9600            // Standard GPS baud rate
 
 // -- BATTERY MONITORING --
-#define BATTERY_ENABLED true
+#define BATTERY_ENABLED false
 #define BATTERY_ADC_PIN 35       // ADC1_CH7 - voltage divider input
+#define BATTERY_ADC_CHANNEL ADC1_CHANNEL_7
 #define BATTERY_ADC_SAMPLES 10   // Number of samples to average
 #define BATTERY_MIN_VOLTAGE 3.0  // Minimum battery voltage (empty)
 #define BATTERY_MAX_VOLTAGE 4.2  // Maximum battery voltage (full)

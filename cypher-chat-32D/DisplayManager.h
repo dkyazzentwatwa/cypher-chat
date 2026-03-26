@@ -20,8 +20,9 @@ struct Message {
 };
 
 #define MAX_HISTORY_SIZE 10
-#define STATUS_BAR_HEIGHT 10
-#define MESSAGE_DISPLAY_COUNT 3
+#define STATUS_BAR_HEIGHT 12
+#define FOOTER_HEIGHT 9
+#define MESSAGE_DISPLAY_COUNT 2
 
 class DisplayManager {
 public:
@@ -72,13 +73,15 @@ private:
   char statusLine2[32];
 
   unsigned long lastRefresh;
-  static const unsigned long REFRESH_INTERVAL = 100; // 10 FPS
+  static const unsigned long REFRESH_INTERVAL = 50; // 20 FPS
 
   // Drawing functions
   void drawStatusBar();
   void drawStatusScreen();
   void drawMessagesScreen();
   void drawHistoryScreen();
+  void drawFooterHints();
+  void drawWrappedLastMessage(int yStart, int maxLines);
 
   // Helper to get connection state abbreviation
   const char* getStateAbbrev();
