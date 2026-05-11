@@ -1,5 +1,7 @@
 # Cypher Chat Cardputer-Adv Field Console
 
+> Migration note: this folder is kept as a legacy compatibility sketch. New Cardputer work should use `../cypher-chat-firmware/` with `BOARD_PROFILE_CARDPUTER_ADV` from `BoardProfiles.h`.
+
 M5Stack Cardputer-Adv version of Cypher Chat. This is the flagship field-console sketch: ESP-NOW mesh chat, HMAC passkey, USB serial terminal, BLE UART terminal, color display, full keyboard, speaker, battery monitor, richer peer views, local message logs, and persisted device settings.
 
 ## Build

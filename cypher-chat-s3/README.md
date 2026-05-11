@@ -1,5 +1,7 @@
 # Cypher Chat S3 Board Profiles
 
+> Migration note: this folder is kept as a legacy compatibility sketch. New S3 board work should use `../cypher-chat-firmware/` and select `BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18` or `BOARD_PROFILE_WAVESHARE_TOUCH_LCD_147` from `BoardProfiles.h`.
+
 `cypher-chat-s3/` is a profile-based ESP32-S3 sketch for newer display boards. It keeps the Cypher Chat mesh, BLE UART, terminal commands, settings, emergency broadcast, and message history behavior while swapping display/input support at compile time.
 
 ## Supported Profiles
@@ -36,17 +38,17 @@ arduino-cli board list
 stty -f /dev/cu.usbmodemXXXX 1200
 sleep 2
 arduino-cli board list
-arduino-cli upload \
+arduino-cli compile --upload \
   -p /dev/cu.usbmodemYYYY \
   --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=custom" \
   --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18" \
   cypher-chat-s3
 ```
 
-Serial monitor runs at 115200 baud:
+For the Waveshare S3 USB terminal, keep DTR/RTS off:
 
 ```bash
-arduino-cli monitor -p /dev/cu.usbmodemYYYY -c baudrate=115200
+arduino-cli monitor -p /dev/cu.usbmodemYYYY -c baudrate=115200,dtr=off,rts=off --raw
 ```
 
 ## Useful Commands

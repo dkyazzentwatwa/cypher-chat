@@ -54,92 +54,117 @@ arduino-cli core install esp32:esp32@3.x.x
 ### 3. Install Libraries
 
 ```bash
-arduino-cli lib install "NimBLE-Arduino"
-arduino-cli lib install "Adafruit GFX Library"
-arduino-cli lib install "Adafruit SSD1306"
-arduino-cli lib install "Adafruit BusIO"
+arduino-cli lib install "NimBLE-Arduino" "Adafruit GFX Library" "Adafruit SSD1306" "Adafruit ST7735 and ST7789 Library" "Adafruit XCA9554" "GFX Library for Arduino" "Arduino_DriveBus" "XPowersLib" "M5Cardputer"
 ```
 
 ### 4. Build & Flash
 
 ```bash
-# Full version (OLED + buttons)
-arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app cypher-chat-32D/cypher-chat-32D.ino
-arduino-cli upload -p /dev/cu.SLAB_USBtoUART --fqbn esp32:esp32:esp32:PartitionScheme=huge_app cypher-chat-32D/cypher-chat-32D.ino
+arduino-cli compile --fqbn "<board-fqbn>" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=<profile>" \
+  cypher-chat-firmware
 
-# Basic version (terminal only)
-arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app cypher-chat-basic/cypher-chat-basic.ino
+arduino-cli upload -p /dev/cu.usbserial-XXXX --fqbn "<board-fqbn>" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=<profile>" \
+  cypher-chat-firmware
 ```
 
 > **Tip:** Find your port with `arduino-cli board list`
 
 ---
 
-## 🧰 Additional Board Builds
+## 🧰 Unified Board Profiles
 
-### Cardputer-Adv Field Console
+The canonical firmware lives in `cypher-chat-firmware/`. All current boards now build from the same app, mesh, BLE, terminal, display, input, GPS, power, and settings code. `cypher-chat-firmware/BoardProfiles.h` is the source of truth for board-specific behavior.
 
-The M5Stack Cardputer-Adv port lives in `cypher-chat-cardputer-adv/`. It adds the built-in ESP32-S3, color display, full keyboard, speaker, USB serial, BLE UART, ESP-NOW mesh radio, richer peer views, message logs, persisted settings, and Normal/Quiet/Monitor/Base Relay modes.
-
-```bash
-arduino-cli compile --fqbn "m5stack:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc" cypher-chat-cardputer-adv
-```
-
-On device, type chat messages directly and press Enter to send. Tab or Fn cycles screens, and the Menu screen exposes Status, Messages, Mesh, Peers, Settings, Modes, System, Diagnostics, and Emergency tools.
-
-Useful Cardputer terminal commands:
-
-```text
-dump
-logs
-brightness 180
-speaker mute
-relay base
-peername 3FA4 Base
-trust 3FA4 trusted
-resetsettings
-```
-
-### Unified ESP32-S3 Profiles
-
-The profile-based ESP32-S3 sketch lives in `cypher-chat-s3/`. It keeps the mesh chat, BLE UART, terminal commands, settings, emergency broadcast, and message history behavior while swapping the display/input layer at compile time.
+Legacy folders are still kept as compatibility references while the migration settles, but new board work should go into `cypher-chat-firmware/`.
 
 Install the shared dependencies:
 
 ```bash
-arduino-cli lib install "NimBLE-Arduino" "Adafruit GFX Library" "Adafruit ST7735 and ST7789 Library" "Adafruit XCA9554" "GFX Library for Arduino" "Arduino_DriveBus" "XPowersLib" "M5Cardputer"
+arduino-cli lib install "NimBLE-Arduino" "Adafruit GFX Library" "Adafruit SSD1306" "Adafruit ST7735 and ST7789 Library" "Adafruit XCA9554" "GFX Library for Arduino" "Arduino_DriveBus" "XPowersLib" "M5Cardputer"
 ```
 
-Supported profile macros:
+Profile table:
 
-- `BOARD_PROFILE_CARDPUTER_ADV`
-- `BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18`
-- `BOARD_PROFILE_WAVESHARE_TOUCH_LCD_147`
+| Profile | Board FQBN | Hardware |
+|---------|------------|----------|
+| `BOARD_PROFILE_BASIC_ESP32` | `esp32:esp32:esp32:PartitionScheme=huge_app` | Bare ESP32, terminal-only |
+| `BOARD_PROFILE_ESP32_32D` | `esp32:esp32:esp32:PartitionScheme=huge_app` | ESP32 + SSD1306 + 3 buttons |
+| `BOARD_PROFILE_CARDPUTER_ADV` | `m5stack:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc` | M5Stack Cardputer-Adv |
+| `BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18` | `esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=app3M_fat9M_16MB` | Waveshare ESP32-S3 1.8 AMOLED touch |
+| `BOARD_PROFILE_WAVESHARE_TOUCH_LCD_147` | `esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=app3M_fat9M_16MB` | Waveshare ESP32-S3 1.47 LCD touch |
+| `BOARD_PROFILE_XIAO_ESP32C3_OLED_GPS_3BTN` | `esp32:esp32:XIAO_ESP32C3:PartitionScheme=no_ota` | XIAO ESP32-C3 + SSD1306 + GPS + 3 buttons |
 
-Compile one profile by changing `BOARD_PROFILE`:
+Compile one profile by changing only the FQBN and `BOARD_PROFILE`:
 
 ```bash
-arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=custom" \
-  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18" \
-  cypher-chat-s3
+arduino-cli compile --fqbn "<board-fqbn>" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=<profile>" \
+  cypher-chat-firmware
 ```
 
-For Waveshare upload from macOS, use the 1200-baud touch flow first:
+Examples:
+
+```bash
+arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=BOARD_PROFILE_BASIC_ESP32" \
+  cypher-chat-firmware
+
+arduino-cli compile --fqbn "esp32:esp32:XIAO_ESP32C3:PartitionScheme=no_ota" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=BOARD_PROFILE_XIAO_ESP32C3_OLED_GPS_3BTN" \
+  cypher-chat-firmware
+```
+
+### XIAO ESP32-C3 OLED GPS 3-Button
+
+Wiring:
+
+| Feature | XIAO Pin |
+|---------|----------|
+| SSD1306 SDA | GPIO8 |
+| SSD1306 SCL | GPIO9 |
+| GPS TX into XIAO RX | GPIO20 |
+| XIAO TX to GPS RX | GPIO21 |
+| Button 1 | GPIO1, active-low to ground |
+| Button 2 | GPIO2, active-low to ground |
+| Button 3 | GPIO3, active-low to ground |
+
+Button behavior:
+
+- GPIO1 short: up / previous
+- GPIO1 long: back
+- GPIO2 short: down / next
+- GPIO3 short: enter / menu
+- GPIO3 long: emergency / SOS
+
+On the OLED UI, GPIO1/GPIO2 cycle screens outside the menu and move selection
+inside the menu. GPIO3 opens/selects the menu.
+
+### Upload And Monitor
+
+For Waveshare S3 boards on macOS, use the 1200-baud touch flow first:
 
 ```bash
 arduino-cli board list
 stty -f /dev/cu.usbmodemXXXX 1200
 sleep 2
 arduino-cli board list
-arduino-cli upload -p /dev/cu.usbmodemYYYY --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=custom" \
-  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18" \
-  cypher-chat-s3
 ```
 
-Serial monitor runs at `115200`:
+Then compile and upload with the same FQBN/profile:
 
 ```bash
-arduino-cli monitor -p /dev/cu.usbmodemYYYY -c baudrate=115200
+arduino-cli compile --upload -p /dev/cu.usbmodemYYYY --fqbn "<board-fqbn>" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=<profile>" \
+  cypher-chat-firmware
+```
+
+For the Waveshare S3 USB terminal, keep DTR/RTS off so opening the monitor does
+not kick the board back through USB re-enumeration:
+
+```bash
+arduino-cli monitor -p /dev/cu.usbmodemYYYY -c baudrate=115200,dtr=off,rts=off --raw
 ```
 
 ---
@@ -240,10 +265,11 @@ ESP32 DevKit C V4
 
 All current Cypher-Chat firmware variants use the same default mesh language so mixed fleets can find each other without extra setup:
 
-- `cypher-chat-basic`
-- `cypher-chat-32D`
-- `cypher-chat-cardputer-adv`
-- `cypher-chat-s3`
+- `cypher-chat-firmware` profiles
+- legacy `cypher-chat-basic`
+- legacy `cypher-chat-32D`
+- legacy `cypher-chat-cardputer-adv`
+- legacy `cypher-chat-s3`
 
 The shared default is protocol `0x01` with the starter mesh key/passkey `123456`. Basic and 32D still understand the newer encrypted `0x02` packets on receive, but they transmit the shared compatibility format by default so Cardputer, S3, and bare ESP32 boards can discover each other through normal 15-second mesh heartbeats.
 
@@ -292,6 +318,13 @@ If server goes down, hold **Button 1** during reboot to promote that device to s
 
 ```
 cypher-chat/
+├── cypher-chat-firmware/     # Canonical unified board-profile sketch
+│   ├── cypher-chat-firmware.ino
+│   ├── BoardProfiles.h       # Central profile registry
+│   ├── DisplayPort.*         # SSD1306, ST7789, SH8601, M5GFX, null
+│   ├── InputPort.*           # Keyboard, touch, GPIO buttons, terminal-only
+│   ├── GpsPort.*             # NMEA UART GPS or disabled
+│   └── PowerPort.*           # M5/AXP/null power reporting
 ├── cypher-chat-32D/          # Full build (OLED, buttons, buzzer)
 │   ├── cypher-chat-32D.ino  # Main sketch
 │   ├── Config.h              # Hardware configuration
@@ -299,8 +332,8 @@ cypher-chat/
 │   └── docs/                 # Setup guides
 ├── cypher-chat-basic/        # Minimal build (terminal only)
 │   └── cypher-chat-basic.ino
-├── cypher-chat-cardputer-adv/ # M5Stack Cardputer-Adv field console
-├── cypher-chat-s3/            # ESP32-S3 board-profile sketch
+├── cypher-chat-cardputer-adv/ # Legacy Cardputer compatibility sketch
+├── cypher-chat-s3/            # Legacy ESP32-S3 profile sketch
 ├── COMMANDS.md               # Terminal command reference
 ├── ARCHITECTURE_PLAN.md      # System design doc
 └── README.md                 # This file

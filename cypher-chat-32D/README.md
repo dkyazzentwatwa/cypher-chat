@@ -1,5 +1,7 @@
 # cypher-chat - ESP32 Mesh Emergency Communication System
 
+> Migration note: this folder is kept as a legacy compatibility sketch. New ESP32 32D work should use `../cypher-chat-firmware/` with `BOARD_PROFILE_ESP32_32D` from `BoardProfiles.h`.
+
 [![ESP32](https://img.shields.io/badge/ESP32-DevKit%20v4-blue.svg)](https://www.espressif.com/en/products/socs/esp32)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-ESP32-lightgrey.svg)](https://www.espressif.com/)
