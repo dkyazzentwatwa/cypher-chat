@@ -1,1 +1,20 @@
 .DS_Store
+*.log
+*.bak
+*.bak*
+
+# Arduino build/cache output
+build/
+build_*/
+*.elf
+*.bin
+*.hex
+*.map
+*.eep
+*.lst
+*.sym
+*.tmp
+
+# Local editor and OS noise
+.vscode/
+.idea/

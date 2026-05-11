@@ -80,11 +80,14 @@ extern const int BUTTON_PINS[];
 extern const char* BUTTON_LABELS[];
 
 // -- INDICATORS (Discrete LEDs) --
-#define LED1_PIN 0
-#define LED2_PIN -1 
-#define LED3_PIN 3  // Status/RX
-#define LED4_PIN 1  // Alarm/TX
-#define LED_ENABLED false  // Disabled: GPIO 1 & 3 are UART TX/RX pins
+// Disabled for the SSD1306/buttons DevKit profile because GPIO 1 and 3 are
+// the USB serial TX/RX pins. Keeping all LED pins at -1 prevents accidental
+// serial conflicts if LED_ENABLED is toggled during board bring-up.
+#define LED1_PIN -1
+#define LED2_PIN -1
+#define LED3_PIN -1
+#define LED4_PIN -1
+#define LED_ENABLED false
 
 // Pin mapping for LEDManager
 #define LED_IDLE_PIN    LED1_PIN

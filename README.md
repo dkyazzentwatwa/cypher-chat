@@ -75,6 +75,75 @@ arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app cypher-cha
 
 ---
 
+## 🧰 Additional Board Builds
+
+### Cardputer-Adv Field Console
+
+The M5Stack Cardputer-Adv port lives in `cypher-chat-cardputer-adv/`. It adds the built-in ESP32-S3, color display, full keyboard, speaker, USB serial, BLE UART, ESP-NOW mesh radio, richer peer views, message logs, persisted settings, and Normal/Quiet/Monitor/Base Relay modes.
+
+```bash
+arduino-cli compile --fqbn "m5stack:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc" cypher-chat-cardputer-adv
+```
+
+On device, type chat messages directly and press Enter to send. Tab or Fn cycles screens, and the Menu screen exposes Status, Messages, Mesh, Peers, Settings, Modes, System, Diagnostics, and Emergency tools.
+
+Useful Cardputer terminal commands:
+
+```text
+dump
+logs
+brightness 180
+speaker mute
+relay base
+peername 3FA4 Base
+trust 3FA4 trusted
+resetsettings
+```
+
+### Unified ESP32-S3 Profiles
+
+The profile-based ESP32-S3 sketch lives in `cypher-chat-s3/`. It keeps the mesh chat, BLE UART, terminal commands, settings, emergency broadcast, and message history behavior while swapping the display/input layer at compile time.
+
+Install the shared dependencies:
+
+```bash
+arduino-cli lib install "NimBLE-Arduino" "Adafruit GFX Library" "Adafruit ST7735 and ST7789 Library" "Adafruit XCA9554" "GFX Library for Arduino" "Arduino_DriveBus" "XPowersLib" "M5Cardputer"
+```
+
+Supported profile macros:
+
+- `BOARD_PROFILE_CARDPUTER_ADV`
+- `BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18`
+- `BOARD_PROFILE_WAVESHARE_TOUCH_LCD_147`
+
+Compile one profile by changing `BOARD_PROFILE`:
+
+```bash
+arduino-cli compile --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=custom" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18" \
+  cypher-chat-s3
+```
+
+For Waveshare upload from macOS, use the 1200-baud touch flow first:
+
+```bash
+arduino-cli board list
+stty -f /dev/cu.usbmodemXXXX 1200
+sleep 2
+arduino-cli board list
+arduino-cli upload -p /dev/cu.usbmodemYYYY --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=custom" \
+  --build-property build.extra_flags="-DESP32 -DBOARD_PROFILE=BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18" \
+  cypher-chat-s3
+```
+
+Serial monitor runs at `115200`:
+
+```bash
+arduino-cli monitor -p /dev/cu.usbmodemYYYY -c baudrate=115200
+```
+
+---
+
 ## 📦 Hardware Needed
 
 | Component | Cost | Notes |
@@ -215,6 +284,8 @@ cypher-chat/
 │   └── docs/                 # Setup guides
 ├── cypher-chat-basic/        # Minimal build (terminal only)
 │   └── cypher-chat-basic.ino
+├── cypher-chat-cardputer-adv/ # M5Stack Cardputer-Adv field console
+├── cypher-chat-s3/            # ESP32-S3 board-profile sketch
 ├── COMMANDS.md               # Terminal command reference
 ├── ARCHITECTURE_PLAN.md      # System design doc
 └── README.md                 # This file
