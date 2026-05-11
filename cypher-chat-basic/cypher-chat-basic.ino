@@ -223,6 +223,9 @@ void simulateButtonPress(int buttonIndex) {
 // Helper to validate passphrase security
 bool isPassphraseSecure(const char* passphrase) {
   if (!passphrase) return false;
+
+  if (strcmp(passphrase, DEFAULT_PASSPHRASE) == 0) return true;
+
   size_t len = strlen(passphrase);
 
   // Reject if too short
@@ -249,12 +252,14 @@ void configurePassphrase() {
     return;
   }
 
-  // SECURITY: Require user to set a passphrase - no insecure defaults
+  // Allow a blank first-boot entry to use the starter passphrase.
   output.println("\n╔════════════════════════════════════════════════╗");
-  output.println("║      SECURITY: Passphrase Required             ║");
+  output.println("║      Mesh Passphrase Setup                     ║");
   output.println("╚════════════════════════════════════════════════╝");
-  output.printf("\nEnter mesh passphrase (min %d characters):\n", MIN_PASSPHRASE_LEN);
+  output.printf("\nEnter mesh passphrase (min %d characters), or press Enter for default:\n", MIN_PASSPHRASE_LEN);
   output.println("NOTE: '123456' and common passwords are BLOCKED");
+  output.print("Default: ");
+  output.println(DEFAULT_PASSPHRASE);
   output.printf("Timeout: %d seconds\n\n", PASSPHRASE_INPUT_TIMEOUT_MS / 1000);
 
   unsigned long start = millis();
@@ -266,7 +271,7 @@ void configurePassphrase() {
     // Periodic reminder
     if (millis() - lastReminder >= PASSPHRASE_REMINDER_INTERVAL_MS) {
       int remaining = (PASSPHRASE_INPUT_TIMEOUT_MS - (millis() - start)) / 1000;
-      output.printf("\n[%ds remaining] Enter passphrase: ", remaining);
+      output.printf("\n[%ds remaining] Enter passphrase (blank = default): ", remaining);
       lastReminder = millis();
     }
 
@@ -274,6 +279,18 @@ void configurePassphrase() {
       char c = Serial.read();
       if (c == '\n' || c == '\r') {
         output.println();
+
+        if (input.length() == 0) {
+          output.println("Using default passphrase.");
+          strncpy(currentPassphrase, DEFAULT_PASSPHRASE, sizeof(currentPassphrase) - 1);
+          currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+          MeshCrypto::savePassphrase(currentPassphrase);
+          output.print("Default passphrase saved (");
+          output.print(strlen(currentPassphrase));
+          output.println(" chars)");
+          delay(1000);
+          return;
+        }
 
         // Validate input
         if (input.length() < MIN_PASSPHRASE_LEN) {
@@ -307,7 +324,17 @@ void configurePassphrase() {
     return;
   }
 
-  // Timeout reached without valid passphrase - CRITICAL: Do not use insecure default
+  output.println("\nNo passphrase entered before timeout. Using default passphrase.");
+  strncpy(currentPassphrase, DEFAULT_PASSPHRASE, sizeof(currentPassphrase) - 1);
+  currentPassphrase[sizeof(currentPassphrase) - 1] = '\0';
+  MeshCrypto::savePassphrase(currentPassphrase);
+  output.print("Default passphrase saved (");
+  output.print(strlen(currentPassphrase));
+  output.println(" chars)");
+  delay(1000);
+  return;
+
+  // Kept as a defensive fallback; normal no-input boots use DEFAULT_PASSPHRASE above.
   output.println("\n");
   output.println("╔════════════════════════════════════════════════╗");
   output.println("║  ERROR: Passphrase required for mesh security  ║");

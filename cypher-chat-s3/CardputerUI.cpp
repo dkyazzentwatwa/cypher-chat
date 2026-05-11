@@ -15,17 +15,20 @@ static constexpr uint16_t COLOR_WARN = ST77XX_YELLOW;
 static constexpr uint16_t COLOR_DANGER = ST77XX_RED;
 static constexpr uint16_t COLOR_MUTED = 0x8410;
 static constexpr uint16_t COLOR_TEXT = ST77XX_WHITE;
+static constexpr unsigned long SLOW_REFRESH_MS = 1000;
 
 CardputerUI::CardputerUI()
   : _screen(CARD_SCREEN_STATUS),
     _messageCount(0),
     _connectionState(STATE_IDLE),
     _confirmEmergency(false),
-    _lastRefresh(0) {
+    _lastSlowRefresh(0),
+    _dirty(true) {
   memset(_messages, 0, sizeof(_messages));
   memset(_statusLine1, 0, sizeof(_statusLine1));
   memset(_statusLine2, 0, sizeof(_statusLine2));
   memset(_input, 0, sizeof(_input));
+  memset(_liveSignature, 0, sizeof(_liveSignature));
 }
 
 void CardputerUI::begin() {
@@ -40,10 +43,18 @@ void CardputerUI::begin() {
 }
 
 void CardputerUI::updateStatus(const char* line1, const char* line2) {
-  strncpy(_statusLine1, line1 ? line1 : "", sizeof(_statusLine1) - 1);
-  _statusLine1[sizeof(_statusLine1) - 1] = '\0';
-  strncpy(_statusLine2, line2 ? line2 : "", sizeof(_statusLine2) - 1);
-  _statusLine2[sizeof(_statusLine2) - 1] = '\0';
+  char nextLine1[sizeof(_statusLine1)];
+  char nextLine2[sizeof(_statusLine2)];
+  strncpy(nextLine1, line1 ? line1 : "", sizeof(nextLine1) - 1);
+  nextLine1[sizeof(nextLine1) - 1] = '\0';
+  strncpy(nextLine2, line2 ? line2 : "", sizeof(nextLine2) - 1);
+  nextLine2[sizeof(nextLine2) - 1] = '\0';
+  if (strcmp(_statusLine1, nextLine1) == 0 && strcmp(_statusLine2, nextLine2) == 0) {
+    return;
+  }
+  strcpy(_statusLine1, nextLine1);
+  strcpy(_statusLine2, nextLine2);
+  markDirty();
 }
 
 void CardputerUI::addMessage(const char* text, bool outgoing, bool emergency) {
@@ -59,23 +70,34 @@ void CardputerUI::addMessage(const char* text, bool outgoing, bool emergency) {
   msg.timestamp = millis();
   msg.outgoing = outgoing;
   msg.emergency = emergency;
+  markDirty();
 }
 
 void CardputerUI::clearMessages() {
   memset(_messages, 0, sizeof(_messages));
   _messageCount = 0;
+  markDirty();
 }
 
 void CardputerUI::setConnectionState(ConnectionState state) {
+  if (_connectionState == state) {
+    return;
+  }
   _connectionState = state;
+  markDirty();
 }
 
 void CardputerUI::setScreen(CardputerScreen screen) {
+  if (_screen == screen) {
+    return;
+  }
   _screen = screen;
+  markDirty();
 }
 
 void CardputerUI::nextScreen() {
   _screen = static_cast<CardputerScreen>((static_cast<int>(_screen) + 1) % 4);
+  markDirty();
 }
 
 CardputerScreen CardputerUI::getScreen() const {
@@ -83,12 +105,22 @@ CardputerScreen CardputerUI::getScreen() const {
 }
 
 void CardputerUI::setInputBuffer(const char* text) {
-  strncpy(_input, text ? text : "", sizeof(_input) - 1);
-  _input[sizeof(_input) - 1] = '\0';
+  char nextInput[sizeof(_input)];
+  strncpy(nextInput, text ? text : "", sizeof(nextInput) - 1);
+  nextInput[sizeof(nextInput) - 1] = '\0';
+  if (strcmp(_input, nextInput) == 0) {
+    return;
+  }
+  strcpy(_input, nextInput);
+  markDirty();
 }
 
 void CardputerUI::setEmergencyConfirm(bool active) {
+  if (_confirmEmergency == active) {
+    return;
+  }
   _confirmEmergency = active;
+  markDirty();
 }
 
 int CardputerUI::messageCount() const {
@@ -106,10 +138,19 @@ bool CardputerUI::getMessageLine(int visibleIndex, char* out, size_t outSize) co
 
 void CardputerUI::refresh(bool force) {
   unsigned long now = millis();
-  if (!force && now - _lastRefresh < 120) {
-    return;
+  bool slowRefreshDue = now - _lastSlowRefresh >= SLOW_REFRESH_MS;
+  if (!force && !_dirty) {
+    if (!slowRefreshDue) {
+      return;
+    }
+    _lastSlowRefresh = now;
+    if (!liveStateChanged()) {
+      return;
+    }
   }
-  _lastRefresh = now;
+  if (force || slowRefreshDue) {
+    _lastSlowRefresh = now;
+  }
 
   switch (_screen) {
     case CARD_SCREEN_STATUS: drawStatus(); break;
@@ -117,6 +158,39 @@ void CardputerUI::refresh(bool force) {
     case CARD_SCREEN_PEERS: drawPeers(); break;
     case CARD_SCREEN_MENU: drawMenu(); break;
   }
+  updateLiveSignature();
+  _dirty = false;
+}
+
+void CardputerUI::markDirty() {
+  _dirty = true;
+}
+
+void CardputerUI::buildLiveSignature(char* out, size_t outSize) {
+  if (!out || outSize == 0) {
+    return;
+  }
+  String power = powerStatus.headerLabel();
+  snprintf(out, outSize, "%u|%u|%d|%d|%s",
+           static_cast<unsigned>(_screen),
+           static_cast<unsigned>(_connectionState),
+           meshMgr.getOnlinePeerCount(),
+           bleUARTMgr.isConnected() ? 1 : 0,
+           power.c_str());
+}
+
+void CardputerUI::updateLiveSignature() {
+  buildLiveSignature(_liveSignature, sizeof(_liveSignature));
+}
+
+bool CardputerUI::liveStateChanged() {
+  char nextSignature[sizeof(_liveSignature)];
+  buildLiveSignature(nextSignature, sizeof(nextSignature));
+  if (strcmp(_liveSignature, nextSignature) == 0) {
+    return false;
+  }
+  strcpy(_liveSignature, nextSignature);
+  return true;
 }
 
 void CardputerUI::drawHeader(const char* title) {
@@ -359,4 +433,3 @@ int CardputerUI::footerHeight() const {
 int CardputerUI::rowHeight() const {
   return BOARD_DISPLAY_IS_SH8601 ? 34 : 17;
 }
-

@@ -274,6 +274,7 @@ public:
 private:
   // Internal message handling
   void processPacket(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
+  void processCompatPacket(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
   void handleDataMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi);
   void handleEmergency(const MeshPacket* packet, const uint8_t* senderMac);
   void handleAck(const MeshPacket* packet);
@@ -300,6 +301,8 @@ private:
   // Utility
   uint32_t generateMessageId();
   bool addEspNowPeer(const uint8_t* mac);
+  bool signCompatPacket(MeshPacket* packet);
+  bool verifyCompatPacket(const MeshPacket* packet);
 
   // Peer management for new API
   MeshPeer* findOrCreatePeer(const uint8_t* mac);
@@ -309,6 +312,7 @@ private:
   // State
   bool _running;
   char _unitName[17];
+  char _passphrase[65];
   uint8_t _myMac[6];
   GPSCoordinates _myGPS;
 

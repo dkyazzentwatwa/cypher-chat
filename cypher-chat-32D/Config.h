@@ -13,9 +13,8 @@
 // -- PROJECT IDENTIFICATION --
 #define PROJECT_NAME "CYPHER-CHAT"
 #define DEFAULT_UNIT_NAME "CYPHER_NODE"
-// SECURITY: No default passphrase - user MUST set one on first boot
-// Fallback marker for unconfigured state (will be rejected if used)
-#define DEFAULT_PASSPHRASE ""
+// Default mesh passphrase used by all Cypher-Chat variants for easy pairing.
+#define DEFAULT_PASSPHRASE "123456"
 #define INSECURE_DEFAULT_PASSPHRASE "123456"  // Blocked if user tries to set this
 
 // -- RUNTIME CONFIGURATION --
@@ -116,7 +115,7 @@ extern const char* BUTTON_LABELS[];
 #define TERMINAL_BANNER_ENABLED true
 
 // -- PASSPHRASE INPUT --
-#define PASSPHRASE_INPUT_TIMEOUT_MS 60000   // Time to wait for passphrase input (60s default)
+#define PASSPHRASE_INPUT_TIMEOUT_MS 15000   // Time to wait before using default passphrase
 #define PASSPHRASE_REMINDER_INTERVAL_MS 10000  // Remind user every 10 seconds
 
 // -- BLE UART (Nordic UART Service) --

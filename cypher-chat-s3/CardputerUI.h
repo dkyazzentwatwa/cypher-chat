@@ -48,8 +48,14 @@ private:
   char _input[CARDPUTER_INPUT_MAX];
   ConnectionState _connectionState;
   bool _confirmEmergency;
-  unsigned long _lastRefresh;
+  unsigned long _lastSlowRefresh;
+  char _liveSignature[72];
+  bool _dirty;
 
+  void markDirty();
+  void buildLiveSignature(char* out, size_t outSize);
+  void updateLiveSignature();
+  bool liveStateChanged();
   void drawHeader(const char* title);
   void drawStatus();
   void drawChat();
@@ -68,4 +74,3 @@ private:
 
 extern CardputerUI cardputerUI;
 extern DisplayPort displayPort;
-

@@ -1,11 +1,16 @@
 #include "MeshManager.h"
 #include "MeshCrypto.h"
+#include "MessageAuth.h"
 #include "Config.h"
 #include "OutputManager.h"
 #include <cstring>
 #include <algorithm>
 #include <esp_wifi.h>
 #include <esp_random.h>
+
+static constexpr uint8_t COMPAT_MESH_PROTOCOL_VERSION = 0x01;
+static constexpr size_t COMPAT_HMAC_SIZE = 8;
+static constexpr bool MESH_DEFAULT_COMPAT_MODE = true;
 
 // ============================================================================
 // MeshPeer Implementation
@@ -65,6 +70,7 @@ MeshManager::MeshManager()
   , _lastMacRotation(0)
 {
   memset(_unitName, 0, sizeof(_unitName));
+  memset(_passphrase, 0, sizeof(_passphrase));
   memset(_myMac, 0, sizeof(_myMac));
   memset(_originalMac, 0, sizeof(_originalMac));
   memset(_seenMessages, 0, sizeof(_seenMessages));
@@ -124,6 +130,8 @@ bool MeshManager::begin(const char* unitName, const char* passphrase) {
   // Store configuration
   strncpy(_unitName, unitName, sizeof(_unitName) - 1);
   _unitName[sizeof(_unitName) - 1] = '\0';
+  strncpy(_passphrase, passphrase ? passphrase : "", sizeof(_passphrase) - 1);
+  _passphrase[sizeof(_passphrase) - 1] = '\0';
 
   // Initialize crypto with passphrase (HKDF key derivation)
   if (!MeshCrypto::init(passphrase)) {
@@ -279,6 +287,36 @@ void MeshManager::handlePeerReceive(const uint8_t* senderMac, const uint8_t* dat
   }
 
   const MeshHeader* header = reinterpret_cast<const MeshHeader*>(data);
+  if (header->version == COMPAT_MESH_PROTOCOL_VERSION) {
+    if (header->payloadLen > MESH_MAX_PAYLOAD - COMPAT_HMAC_SIZE) {
+      _msgsDropped++;
+      output.printf("MeshManager: Drop invalid compat packet (payloadLen=%u)\n", header->payloadLen);
+      return;
+    }
+
+    size_t expectedCompatLen = sizeof(MeshHeader) + header->payloadLen + COMPAT_HMAC_SIZE;
+    if (len != expectedCompatLen || expectedCompatLen > sizeof(MeshPacket)) {
+      _msgsDropped++;
+      output.printf("MeshManager: Drop malformed compat packet (len=%u expected=%u)\n",
+                    (unsigned)len, (unsigned)expectedCompatLen);
+      return;
+    }
+
+    MeshPacket packet;
+    memset(&packet, 0, sizeof(packet));
+    memcpy(&packet, data, expectedCompatLen);
+
+    int8_t rssi = -50;
+    processCompatPacket(&packet, senderMac, rssi);
+    return;
+  }
+
+  if (header->version != MESH_PROTOCOL_VERSION) {
+    _msgsDropped++;
+    output.printf("MeshManager: Drop unsupported packet version 0x%02X\n", header->version);
+    return;
+  }
+
   if (header->payloadLen > MESH_MAX_PLAINTEXT) {
     _msgsDropped++;
     output.printf("MeshManager: Drop invalid packet (payloadLen=%u)\n", header->payloadLen);
@@ -348,13 +386,24 @@ void MeshManager::update() {
   processStoreQueue();
 }
 
-// Helper: calculate total wire size for an encrypted packet
-static size_t wireSize(uint8_t payloadLen) {
+static size_t encryptedWireSize(uint8_t payloadLen) {
   return sizeof(MeshHeader) + MESH_CRYPTO_NONCE_SIZE + payloadLen + MESH_CRYPTO_TAG_SIZE;
 }
 
+static size_t compatWireSize(uint8_t payloadLen) {
+  return sizeof(MeshHeader) + payloadLen + COMPAT_HMAC_SIZE;
+}
+
+static size_t packetWireSize(const MeshPacket* packet) {
+  if (packet && packet->header.version == COMPAT_MESH_PROTOCOL_VERSION) {
+    return compatWireSize(packet->header.payloadLen);
+  }
+  return encryptedWireSize(packet ? packet->header.payloadLen : 0);
+}
+
 uint32_t MeshManager::broadcast(const uint8_t* data, size_t len, MeshMessageType type, uint8_t ttl) {
-  if (!_running || data == nullptr || len == 0 || len > MESH_MAX_PLAINTEXT) {
+  size_t maxPayload = MESH_DEFAULT_COMPAT_MODE ? (MESH_MAX_PAYLOAD - COMPAT_HMAC_SIZE) : MESH_MAX_PLAINTEXT;
+  if (!_running || data == nullptr || len == 0 || len > maxPayload) {
     return 0;
   }
 
@@ -362,7 +411,7 @@ uint32_t MeshManager::broadcast(const uint8_t* data, size_t len, MeshMessageType
   memset(&packet, 0, sizeof(packet));
 
   // Fill header
-  packet.header.version = MESH_PROTOCOL_VERSION;
+  packet.header.version = MESH_DEFAULT_COMPAT_MODE ? COMPAT_MESH_PROTOCOL_VERSION : MESH_PROTOCOL_VERSION;
   packet.header.type = type;
   packet.header.ttl = ttl;
   packet.header.hopCount = 0;
@@ -374,20 +423,24 @@ uint32_t MeshManager::broadcast(const uint8_t* data, size_t len, MeshMessageType
   packet.header.payloadLen = len;
   packet.header.flags = 0;
 
-  // Copy plaintext payload
   memcpy(packet.payload, data, len);
 
-  // Encrypt payload (AEAD: AES-256-GCM)
-  if (!MeshCrypto::encryptPayload(&packet)) {
-    output.println("MeshManager: Failed to encrypt packet");
-    return 0;
+  size_t totalSize = 0;
+  if (MESH_DEFAULT_COMPAT_MODE) {
+    if (!signCompatPacket(&packet)) {
+      output.println("MeshManager: Failed to sign compat packet");
+      return 0;
+    }
+    totalSize = compatWireSize(packet.header.payloadLen);
+  } else {
+    if (!MeshCrypto::encryptPayload(&packet)) {
+      output.println("MeshManager: Failed to encrypt packet");
+      return 0;
+    }
+    totalSize = encryptedWireSize(packet.header.payloadLen);
   }
 
-  // Mark as seen to prevent echo
   markMessageSeen(packet.header.messageId);
-
-  // Send via ESP-NOW broadcast
-  size_t totalSize = wireSize(packet.header.payloadLen);
 
   if (!_broadcastPeer) {
     output.println("MeshManager: ERROR - Broadcast peer is NULL!");
@@ -406,7 +459,8 @@ uint32_t MeshManager::broadcast(const uint8_t* data, size_t len, MeshMessageType
 }
 
 uint32_t MeshManager::sendTo(const uint8_t* destMac, const uint8_t* data, size_t len, MeshMessageType type) {
-  if (!_running || destMac == nullptr || data == nullptr || len == 0 || len > MESH_MAX_PLAINTEXT) {
+  size_t maxPayload = MESH_DEFAULT_COMPAT_MODE ? (MESH_MAX_PAYLOAD - COMPAT_HMAC_SIZE) : MESH_MAX_PLAINTEXT;
+  if (!_running || destMac == nullptr || data == nullptr || len == 0 || len > maxPayload) {
     return 0;
   }
 
@@ -414,7 +468,7 @@ uint32_t MeshManager::sendTo(const uint8_t* destMac, const uint8_t* data, size_t
   memset(&packet, 0, sizeof(packet));
 
   // Fill header
-  packet.header.version = MESH_PROTOCOL_VERSION;
+  packet.header.version = MESH_DEFAULT_COMPAT_MODE ? COMPAT_MESH_PROTOCOL_VERSION : MESH_PROTOCOL_VERSION;
   packet.header.type = type;
   packet.header.ttl = MESH_DEFAULT_TTL;
   packet.header.hopCount = 0;
@@ -426,18 +480,22 @@ uint32_t MeshManager::sendTo(const uint8_t* destMac, const uint8_t* data, size_t
   packet.header.payloadLen = len;
   packet.header.flags = 0x01;  // Needs ACK
 
-  // Copy plaintext payload
   memcpy(packet.payload, data, len);
 
-  // Encrypt payload
-  if (!MeshCrypto::encryptPayload(&packet)) {
-    return 0;
+  size_t totalSize = 0;
+  if (MESH_DEFAULT_COMPAT_MODE) {
+    if (!signCompatPacket(&packet)) {
+      return 0;
+    }
+    totalSize = compatWireSize(packet.header.payloadLen);
+  } else {
+    if (!MeshCrypto::encryptPayload(&packet)) {
+      return 0;
+    }
+    totalSize = encryptedWireSize(packet.header.payloadLen);
   }
 
-  // Mark as seen
   markMessageSeen(packet.header.messageId);
-
-  size_t totalSize = wireSize(packet.header.payloadLen);
 
   // Find or create peer
   MeshPeer* peer = findOrCreatePeer(destMac);
@@ -532,7 +590,7 @@ bool MeshManager::storeForDelivery(const uint8_t* destMac, const uint8_t* data, 
   // Build packet for storage
   MeshPacket packet;
   memset(&packet, 0, sizeof(packet));
-  packet.header.version = MESH_PROTOCOL_VERSION;
+  packet.header.version = MESH_DEFAULT_COMPAT_MODE ? COMPAT_MESH_PROTOCOL_VERSION : MESH_PROTOCOL_VERSION;
   packet.header.type = MESH_MSG_FORWARD;
   packet.header.ttl = MESH_DEFAULT_TTL;
   packet.header.hopCount = 0;
@@ -543,14 +601,18 @@ bool MeshManager::storeForDelivery(const uint8_t* destMac, const uint8_t* data, 
   packet.header.timestamp = millis();
   packet.header.flags = 0x02;  // Is relay/stored
 
-  if (len > MESH_MAX_PLAINTEXT) {
-    len = MESH_MAX_PLAINTEXT;
+  size_t maxPayload = MESH_DEFAULT_COMPAT_MODE ? (MESH_MAX_PAYLOAD - COMPAT_HMAC_SIZE) : MESH_MAX_PLAINTEXT;
+  if (len > maxPayload) {
+    len = maxPayload;
   }
   packet.header.payloadLen = len;
   memcpy(packet.payload, data, len);
 
-  // Encrypt payload
-  MeshCrypto::encryptPayload(&packet);
+  if (MESH_DEFAULT_COMPAT_MODE) {
+    signCompatPacket(&packet);
+  } else {
+    MeshCrypto::encryptPayload(&packet);
+  }
 
   // Store entry
   _storeQueue[slot].packet = packet;
@@ -674,6 +736,55 @@ void MeshManager::processPacket(const MeshPacket* packet, const uint8_t* senderM
   }
 }
 
+void MeshManager::processCompatPacket(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi) {
+  if (!verifyCompatPacket(packet)) {
+    output.println("MeshManager: Compat HMAC verification failed");
+    _msgsDropped++;
+    return;
+  }
+
+  if (isMessageSeen(packet->header.messageId)) {
+    return;
+  }
+
+  markMessageSeen(packet->header.messageId);
+  _msgsReceived++;
+
+  updatePeer(senderMac, rssi, nullptr, 1);
+
+  if (memcmp(packet->header.originMac, senderMac, 6) != 0) {
+    updatePeer(packet->header.originMac, -127, nullptr, packet->header.hopCount + 1);
+  }
+
+  switch (packet->header.type) {
+    case MESH_MSG_DATA:
+    case MESH_MSG_FORWARD:
+      handleDataMessage(packet, senderMac, rssi);
+      break;
+
+    case MESH_MSG_EMERGENCY:
+      handleEmergency(packet, senderMac);
+      break;
+
+    case MESH_MSG_ACK:
+      handleAck(packet);
+      break;
+
+    case MESH_MSG_HEARTBEAT:
+      handleHeartbeat(packet, senderMac, rssi);
+      break;
+
+    default:
+      output.printf("MeshManager: Unknown compat message type: 0x%02X\n", packet->header.type);
+      break;
+  }
+
+  if (shouldRelay(packet)) {
+    MeshPacket relay = *packet;
+    relayPacket(&relay);
+  }
+}
+
 void MeshManager::handleDataMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi) {
   // Check if message is for us
   bool isForUs = memcmp(packet->header.destMac, _myMac, 6) == 0 ||
@@ -690,7 +801,9 @@ void MeshManager::handleDataMessage(const MeshPacket* packet, const uint8_t* sen
       // Build ACK packet
       MeshPacket ack;
       memset(&ack, 0, sizeof(ack));
-      ack.header.version = MESH_PROTOCOL_VERSION;
+      ack.header.version = packet->header.version == COMPAT_MESH_PROTOCOL_VERSION
+        ? COMPAT_MESH_PROTOCOL_VERSION
+        : MESH_PROTOCOL_VERSION;
       ack.header.type = MESH_MSG_ACK;
       ack.header.ttl = MESH_DEFAULT_TTL;
       ack.header.hopCount = 0;
@@ -704,12 +817,18 @@ void MeshManager::handleDataMessage(const MeshPacket* packet, const uint8_t* sen
       memcpy(ack.payload, &packet->header.messageId, 4);
       ack.header.payloadLen = 4;
 
-      // Encrypt ACK
-      MeshCrypto::encryptPayload(&ack);
+      size_t ackSize = 0;
+      if (ack.header.version == COMPAT_MESH_PROTOCOL_VERSION) {
+        signCompatPacket(&ack);
+        ackSize = compatWireSize(ack.header.payloadLen);
+      } else {
+        MeshCrypto::encryptPayload(&ack);
+        ackSize = encryptedWireSize(ack.header.payloadLen);
+      }
 
       // Send ACK
       if (_broadcastPeer) {
-        _broadcastPeer->sendMessage((uint8_t*)&ack, wireSize(ack.header.payloadLen));
+        _broadcastPeer->sendMessage((uint8_t*)&ack, ackSize);
       }
     }
   }
@@ -808,17 +927,12 @@ bool MeshManager::shouldRelay(const MeshPacket* packet) {
 }
 
 void MeshManager::relayPacket(MeshPacket* packet) {
-  // Modify only mutable header fields - encrypted payload stays unchanged
-  // AEAD tag remains valid because AAD only covers immutable fields
   packet->header.ttl--;
   packet->header.hopCount++;
   memcpy(packet->header.lastHopMac, _myMac, 6);
 
-  // No re-encryption needed - forward with original encrypted payload
-
-  // Broadcast relay
   if (_broadcastPeer &&
-      _broadcastPeer->sendMessage((uint8_t*)packet, wireSize(packet->header.payloadLen))) {
+      _broadcastPeer->sendMessage((uint8_t*)packet, packetWireSize(packet))) {
     _msgsRelayed++;
   }
 }
@@ -830,6 +944,38 @@ bool MeshManager::isMessageSeen(uint32_t messageId) {
     }
   }
   return false;
+}
+
+bool MeshManager::verifyCompatPacket(const MeshPacket* packet) {
+  if (!packet || packet->header.version != COMPAT_MESH_PROTOCOL_VERSION) {
+    return false;
+  }
+
+  uint8_t receivedHmac[COMPAT_HMAC_SIZE];
+  memcpy(receivedHmac, &packet->payload[packet->header.payloadLen], COMPAT_HMAC_SIZE);
+
+  MeshPacket verify = *packet;
+
+  uint8_t expectedHmac[32];
+  if (!MessageAuth::generateHMAC((const char*)&verify, _passphrase, expectedHmac, sizeof(expectedHmac))) {
+    return false;
+  }
+
+  return memcmp(receivedHmac, expectedHmac, COMPAT_HMAC_SIZE) == 0;
+}
+
+bool MeshManager::signCompatPacket(MeshPacket* packet) {
+  if (!packet || packet->header.payloadLen > MESH_MAX_PAYLOAD - COMPAT_HMAC_SIZE) {
+    return false;
+  }
+
+  uint8_t hmac[32];
+  if (!MessageAuth::generateHMAC((const char*)packet, _passphrase, hmac, sizeof(hmac))) {
+    return false;
+  }
+
+  memcpy(&packet->payload[packet->header.payloadLen], hmac, COMPAT_HMAC_SIZE);
+  return true;
 }
 
 void MeshManager::markMessageSeen(uint32_t messageId) {
@@ -971,12 +1117,12 @@ void MeshManager::deliverStoredMessages(const uint8_t* peerMac) {
     if (memcmp(_storeQueue[i].targetMac, peerMac, 6) == 0) {
       MeshPacket* packet = &_storeQueue[i].packet;
 
-      // Stored packets are already encrypted - just update mutable header and send
+      // Stored packets are already signed/encrypted - just update mutable header and send
       packet->header.timestamp = millis();
       memcpy(packet->header.lastHopMac, _myMac, 6);
 
       if (_broadcastPeer &&
-          _broadcastPeer->sendMessage((uint8_t*)packet, wireSize(packet->header.payloadLen))) {
+          _broadcastPeer->sendMessage((uint8_t*)packet, packetWireSize(packet))) {
         output.printf("MeshManager: Delivered stored message %08lX\n",
                       (unsigned long)packet->header.messageId);
         _msgsSent++;

@@ -236,10 +236,25 @@ ESP32 DevKit C V4
 
 ---
 
+## Mesh Compatibility
+
+All current Cypher-Chat firmware variants use the same default mesh language so mixed fleets can find each other without extra setup:
+
+- `cypher-chat-basic`
+- `cypher-chat-32D`
+- `cypher-chat-cardputer-adv`
+- `cypher-chat-s3`
+
+The shared default is protocol `0x01` with the starter mesh key/passkey `123456`. Basic and 32D still understand the newer encrypted `0x02` packets on receive, but they transmit the shared compatibility format by default so Cardputer, S3, and bare ESP32 boards can discover each other through normal 15-second mesh heartbeats.
+
+Press Enter at first boot, or wait 15 seconds on a power-only boot, to accept the shared default. Change the mesh key/passkey on every device when you want a private fleet.
+
+---
+
 ## 🔒 Security
 
 ### First Boot Setup
-On first boot, you'll be prompted to set a **mesh passphrase** (min 8 characters). This key encrypts all mesh traffic.
+On first boot, you can press Enter to use the shared starter mesh key `123456`, or enter a stronger custom key/passphrase for a private fleet. Power-only boots use the starter key automatically after 15 seconds.
 
 ### BLE Pairing
 Change the default BLE PIN before deployment:
