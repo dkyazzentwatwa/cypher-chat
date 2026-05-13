@@ -219,10 +219,11 @@ ESP32 DevKit C V4
 - **GPS integration** — Location tagging (optional)
 
 ### Security
-- **HMAC-SHA256** — Message authentication
+- **AES-256-GCM** — Encrypted and authenticated mesh payloads
+- **Replay protection** — Per-origin monotonic message IDs
 - **Peer blocklist** — Block malicious nodes
 - **Peer trustlist** — Whitelist trusted devices
-- **BLE PIN** — Custom pairing code
+- **BLE UART** — Open local terminal access; treat proximity as trusted
 
 ---
 
@@ -253,8 +254,7 @@ ESP32 DevKit C V4
 | Command | Description |
 |---------|-------------|
 | `name <callsign>` | Set unit name |
-| `blepin <6digits>` | Change BLE PIN |
-| `passphrase` | Change mesh key |
+| `passphrase <8-64 chars>` | Change mesh passphrase |
 | `quiet` / `verbose` | Terminal mode |
 
 > Run `help` on device for full command list!
@@ -263,34 +263,31 @@ ESP32 DevKit C V4
 
 ## Mesh Compatibility
 
-All current Cypher-Chat firmware variants use the same default mesh language so mixed fleets can find each other without extra setup:
+All current `cypher-chat-firmware` board profiles use the same secure mesh language so mixed fleets can find each other after using the same passphrase:
 
 - `cypher-chat-firmware` profiles
-- legacy `cypher-chat-basic`
-- legacy `cypher-chat-32D`
-- legacy `cypher-chat-cardputer-adv`
-- legacy `cypher-chat-s3`
 
-The shared default is protocol `0x01` with the starter mesh key/passkey `123456`. Basic and 32D still understand the newer encrypted `0x02` packets on receive, but they transmit the shared compatibility format by default so Cardputer, S3, and bare ESP32 boards can discover each other through normal 15-second mesh heartbeats.
+The unified firmware now uses secure-only protocol `0x02`. Mesh payloads are AES-256-GCM encrypted and authenticated, and there is no legacy plaintext or HMAC-only transmit/receive path. Legacy sketches must be updated or reflashed to join this mesh.
 
-Press Enter at first boot, or wait 15 seconds on a power-only boot, to accept the shared default. Change the mesh key/passkey on every device when you want a private fleet.
+Press Enter at first boot, or wait through unattended setup, to accept the shared default passphrase `01234567`. This default is not private for real events; set the same strong 8-64 character passphrase on every device for a private fleet.
 
 ---
 
 ## 🔒 Security
 
 ### First Boot Setup
-On first boot, you can press Enter to use the shared starter mesh key `123456`, or enter a stronger custom key/passphrase for a private fleet. Power-only boots use the starter key automatically after 15 seconds.
+On first boot, you can press Enter to use the shared starter passphrase `01234567`, or enter a stronger custom passphrase for a private fleet. Power-only boots use the starter passphrase automatically after the setup timeout.
 
-### BLE Pairing
-Change the default BLE PIN before deployment:
+### BLE UART
+BLE UART remains open by design for phone terminal access. Mesh traffic is encrypted over the air, but anyone with local BLE access to the device can use the terminal, so control proximity and physical access:
 ```
-blepin 847291
+passphrase event-long-shared-secret
 ```
 
 ### Best Practices
 - Use strong, unique passphrases per network
-- Change BLE PIN from default `123456`
+- Do not use default `01234567` at real events
+- Reflash or update all devices so no old plaintext firmware remains in the fleet
 - Enable blocklist for untrusted peers
 - Rotate keys periodically
 

@@ -1,4 +1,5 @@
 #include "Config_Cardputer.h"
+#include <CypherPuterReturn.h>
 #include "MessageAuth.h"
 #include "OutputManager.h"
 #if BLE_UART_ENABLED
@@ -379,7 +380,7 @@ int menuItemCount(CardputerMenuPage page) {
       return count > 0 ? count : 2;
     }
     case MENU_PAGE_SETTINGS: return 9;
-    case MENU_PAGE_SYSTEM: return 7;
+    case MENU_PAGE_SYSTEM: return 8;
     case MENU_PAGE_MODES: return 5;
     case MENU_PAGE_DIAGNOSTICS: return 5;
     case MENU_PAGE_EMERGENCY: return 3;
@@ -546,9 +547,9 @@ void renderMenu() {
 
   if (menuPage == MENU_PAGE_SYSTEM) {
     static const char* const systemItems[] = {
-      "Version", "Memory + uptime", "Clear local history", "Dump status", "Factory reset settings", "Restart", "Back"
+      "Version", "Memory + uptime", "Clear local history", "Dump status", "Factory reset settings", "Restart", "Return to Launcher", "Back"
     };
-    cardputerUI.drawMenuList("System", systemItems, 7, menuSelected, menuScroll, "Ent run | Del back");
+    cardputerUI.drawMenuList("System", systemItems, 8, menuSelected, menuScroll, "Ent run | Del back");
     return;
   }
 
@@ -766,6 +767,10 @@ void menuEnter() {
       cardputerUI.refresh(true);
       delay(3000);
       ESP.restart();
+    } else if (menuSelected == 6) {
+      cardputerUI.updateStatus("Returning", "Cypher Putter OS");
+      cardputerUI.refresh(true);
+      cypherPuterReturnToLauncher(750);
     } else {
       resetMenu(MENU_PAGE_HOME);
     }

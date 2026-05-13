@@ -1,5 +1,4 @@
 #include "Config.h"
-#include "MessageAuth.h"
 #include "OutputManager.h"
 #if BLE_UART_ENABLED
 #include "BLEUARTManager.h"
@@ -20,7 +19,7 @@
 
 bool isServer = false;
 String unitName = DEFAULT_UNIT_NAME;
-uint32_t currentPasskey = DEFAULT_PASSKEY;
+char currentPassphrase[MAX_PASSPHRASE_LEN + 1] = DEFAULT_PASSPHRASE;
 String messageHistory[10];
 int historyCount = 0;
 
@@ -34,7 +33,7 @@ const unsigned long EMERGENCY_DURATION = 30000;
 
 static char composeBuffer[CARDPUTER_INPUT_MAX] = "";
 static bool emergencyConfirm = false;
-static bool passkeyLoadedFromFlash = false;
+static bool passphraseLoadedFromFlash = false;
 
 enum CardputerMenuPage {
   MENU_PAGE_HOME,
@@ -46,7 +45,7 @@ enum CardputerMenuPage {
   MENU_PAGE_SYSTEM,
   MENU_PAGE_EMERGENCY,
   MENU_PAGE_EDIT_NAME,
-  MENU_PAGE_EDIT_PASSKEY
+  MENU_PAGE_EDIT_PASSPHRASE
 };
 
 static CardputerMenuPage menuPage = MENU_PAGE_HOME;
@@ -57,7 +56,7 @@ static char editBuffer[MAX_MESSAGE_SIZE] = "";
 void sendTypedMessage(const char* text);
 void handleInputEvents();
 bool handleVisualDisplayInputEvent(const InputEvent& event);
-void configurePasskey();
+void configurePassphrase();
 void updateComposeUI();
 void setEmergencyConfirm(bool active);
 void renderMenu();
@@ -67,7 +66,7 @@ void menuEnter();
 void menuBack();
 void handleMenuKey(char c, bool fnHeld);
 bool saveEditedName();
-bool saveEditedPasskey();
+bool saveEditedPassphrase();
 const char* terminalModeLabel();
 
 #if MESH_ENABLED
@@ -348,19 +347,24 @@ bool saveEditedName() {
   return true;
 }
 
-bool saveEditedPasskey() {
-  if (strlen(editBuffer) != PASSKEY_DIGITS) {
-    cardputerUI.updateStatus("PIN not saved", "Use exactly 6 digits");
+bool saveEditedPassphrase() {
+  const size_t len = strlen(editBuffer);
+  if (len < MIN_PASSPHRASE_LEN || len > MAX_PASSPHRASE_LEN) {
+    cardputerUI.updateStatus("Phrase not saved", "Use 8-64 chars");
     return false;
   }
-  uint32_t passkey = atoi(editBuffer);
-  if (passkey < MIN_PASSKEY || passkey > MAX_PASSKEY) {
-    cardputerUI.updateStatus("PIN not saved", "Range 100000-999999");
-    return false;
+
+  for (size_t i = 0; i < len; i++) {
+    if (editBuffer[i] < 0x20 || editBuffer[i] > 0x7E) {
+      cardputerUI.updateStatus("Phrase not saved", "Printable ASCII only");
+      return false;
+    }
   }
-  currentPasskey = passkey;
-  DeviceSettings::savePasskey(currentPasskey);
-  cardputerUI.updateStatus("PIN saved", "Restart mesh to apply");
+
+  strncpy(currentPassphrase, editBuffer, MAX_PASSPHRASE_LEN);
+  currentPassphrase[MAX_PASSPHRASE_LEN] = '\0';
+  DeviceSettings::savePassphrase(currentPassphrase);
+  cardputerUI.updateStatus("Passphrase saved", "Restart mesh to apply");
   return true;
 }
 
@@ -416,7 +420,7 @@ void renderMenu() {
     char ansiLine[32];
     snprintf(modeLine, sizeof(modeLine), "Terminal mode: %s", terminalModeLabel());
     snprintf(ansiLine, sizeof(ansiLine), "ANSI: %s", terminalMgr.isAnsiEnabled() ? "on" : "off");
-    const char* items[] = { "Edit device name", "Edit passkey", modeLine, ansiLine, "Back" };
+    const char* items[] = { "Edit device name", "Edit passphrase", modeLine, ansiLine, "Back" };
     cardputerUI.drawMenuList("Settings", items, 5, menuSelected, menuScroll, "Enter edit/toggle");
     return;
   }
@@ -452,7 +456,7 @@ void renderMenu() {
     snprintf(line4, sizeof(line4), "Uptime: %s", uptime);
     snprintf(line5, sizeof(line5), "Heap: %luKB", ESP.getFreeHeap() / 1024);
     snprintf(line6, sizeof(line6), "MAC: %02X:%02X:%02X", mac[3], mac[4], mac[5]);
-    snprintf(line7, sizeof(line7), "PIN: %06lu", (unsigned long)currentPasskey);
+    snprintf(line7, sizeof(line7), "Key: %s", strcmp(currentPassphrase, DEFAULT_PASSPHRASE) == 0 ? "default" : "custom");
     const char* lines[] = { line0, line1, line2, line3, line4, line5, line6, line7 };
     cardputerUI.drawInfoList("Status", lines, 8, menuScroll, "Up/Dn scroll  Bksp");
     return;
@@ -487,8 +491,8 @@ void renderMenu() {
     return;
   }
 
-  if (menuPage == MENU_PAGE_EDIT_PASSKEY) {
-    cardputerUI.drawEditView("Passkey", editBuffer, true, "6 digits  Enter save");
+  if (menuPage == MENU_PAGE_EDIT_PASSPHRASE) {
+    cardputerUI.drawEditView("Passphrase", editBuffer, true, "8-64 chars  Enter save");
   }
 }
 
@@ -563,8 +567,8 @@ void menuEnter() {
       editBuffer[sizeof(editBuffer) - 1] = '\0';
       resetMenu(MENU_PAGE_EDIT_NAME);
     } else if (menuSelected == 1) {
-      snprintf(editBuffer, sizeof(editBuffer), "%06lu", (unsigned long)currentPasskey);
-      resetMenu(MENU_PAGE_EDIT_PASSKEY);
+      editBuffer[0] = '\0';
+      resetMenu(MENU_PAGE_EDIT_PASSPHRASE);
     } else if (menuSelected == 2) {
       TerminalMode next = TERM_NORMAL;
       switch (terminalMgr.getMode()) {
@@ -622,8 +626,8 @@ void menuEnter() {
     return;
   }
 
-  if (menuPage == MENU_PAGE_EDIT_PASSKEY) {
-    if (saveEditedPasskey()) resetMenu(MENU_PAGE_SETTINGS);
+  if (menuPage == MENU_PAGE_EDIT_PASSPHRASE) {
+    if (saveEditedPassphrase()) resetMenu(MENU_PAGE_SETTINGS);
     else renderMenu();
   }
 }
@@ -634,7 +638,7 @@ void menuBack() {
     cardputerUI.refresh(true);
     return;
   }
-  if (menuPage == MENU_PAGE_EDIT_NAME || menuPage == MENU_PAGE_EDIT_PASSKEY) {
+  if (menuPage == MENU_PAGE_EDIT_NAME || menuPage == MENU_PAGE_EDIT_PASSPHRASE) {
     resetMenu(MENU_PAGE_SETTINGS);
     return;
   }
@@ -642,7 +646,7 @@ void menuBack() {
 }
 
 void handleMenuKey(char c, bool fnHeld) {
-  if (menuPage == MENU_PAGE_EDIT_NAME || menuPage == MENU_PAGE_EDIT_PASSKEY) {
+  if (menuPage == MENU_PAGE_EDIT_NAME || menuPage == MENU_PAGE_EDIT_PASSPHRASE) {
     if (c == '\b') {
       size_t len = strlen(editBuffer);
       if (len > 0) editBuffer[len - 1] = '\0';
@@ -658,13 +662,10 @@ void handleMenuKey(char c, bool fnHeld) {
       return;
     }
     size_t len = strlen(editBuffer);
-    bool isPasskey = menuPage == MENU_PAGE_EDIT_PASSKEY;
     if (len < sizeof(editBuffer) - 1 && c >= 0x20 && c <= 0x7E) {
-      if (!isPasskey || isdigit(c)) {
-        editBuffer[len] = c;
-        editBuffer[len + 1] = '\0';
-        renderMenu();
-      }
+      editBuffer[len] = c;
+      editBuffer[len + 1] = '\0';
+      renderMenu();
     }
     return;
   }
@@ -863,16 +864,17 @@ void handleInputEvents() {
   }
 }
 
-void configurePasskey() {
-  cardputerUI.updateStatus("Enter 6-digit PIN", "Enter=save, 10s default");
+void configurePassphrase() {
+  cardputerUI.updateStatus("Enter passphrase", "Enter=default, 10s");
   cardputerUI.setScreen(CARD_SCREEN_CHAT);
   cardputerUI.refresh(true);
-  output.printf("Enter 6-digit passkey on USB serial%s.\n",
+  output.printf("Enter mesh passphrase (8-64 chars) on USB serial%s.\n",
                 inputPort.hasTextInput() ? " or board keyboard" : "");
-  output.println("Press Enter for default 123456. Timeout: 10 seconds.");
+  output.println("Press Enter for default 01234567. Timeout: 10 seconds.");
+  output.println("WARNING: default passphrase is convenient only; change it before real events.");
 
   unsigned long start = millis();
-  char input[PASSKEY_DIGITS + 1] = "";
+  char input[MAX_PASSPHRASE_LEN + 1] = "";
   size_t inputLen = 0;
   bool done = false;
 
@@ -889,7 +891,7 @@ void configurePasskey() {
         done = true;
         break;
       }
-      if (isdigit(c) && inputLen < PASSKEY_DIGITS) {
+      if (c >= 0x20 && c <= 0x7E && inputLen < MAX_PASSPHRASE_LEN) {
         input[inputLen++] = c;
         input[inputLen] = '\0';
       }
@@ -904,7 +906,7 @@ void configurePasskey() {
       if (event.type == INPUT_BACK && inputLen > 0) {
         input[--inputLen] = '\0';
       }
-      if (event.type == INPUT_CHAR && isdigit(event.ch) && inputLen < PASSKEY_DIGITS) {
+      if (event.type == INPUT_CHAR && event.ch >= 0x20 && event.ch <= 0x7E && inputLen < MAX_PASSPHRASE_LEN) {
         input[inputLen++] = event.ch;
         input[inputLen] = '\0';
       }
@@ -920,23 +922,23 @@ void configurePasskey() {
     delay(5);
   }
 
-  if (inputLen == PASSKEY_DIGITS) {
-    uint32_t newPasskey = atoi(input);
-    if (newPasskey >= MIN_PASSKEY && newPasskey <= MAX_PASSKEY) {
-      currentPasskey = newPasskey;
-      DeviceSettings::savePasskey(currentPasskey);
-      output.printf("Passkey set to: %06lu\n", (unsigned long)currentPasskey);
-      cardputerUI.updateStatus("PIN configured", "Secure mesh passkey set");
-      composeBuffer[0] = '\0';
-      updateComposeUI();
-      return;
-    }
+  if (inputLen >= MIN_PASSPHRASE_LEN && inputLen <= MAX_PASSPHRASE_LEN) {
+    strncpy(currentPassphrase, input, MAX_PASSPHRASE_LEN);
+    currentPassphrase[MAX_PASSPHRASE_LEN] = '\0';
+    DeviceSettings::savePassphrase(currentPassphrase);
+    output.println("Passphrase saved. Mesh traffic uses AES-256-GCM.");
+    cardputerUI.updateStatus("Passphrase saved", "Encrypted mesh active");
+    composeBuffer[0] = '\0';
+    updateComposeUI();
+    return;
   }
 
-  currentPasskey = DEFAULT_PASSKEY;
-  DeviceSettings::savePasskey(currentPasskey);
-  output.println("Using default passkey: 123456");
-  cardputerUI.updateStatus("Default PIN active", "Change with passkey command");
+  strncpy(currentPassphrase, DEFAULT_PASSPHRASE, MAX_PASSPHRASE_LEN);
+  currentPassphrase[MAX_PASSPHRASE_LEN] = '\0';
+  DeviceSettings::savePassphrase(currentPassphrase);
+  output.println("Using default passphrase: 01234567");
+  output.println("WARNING: default passphrase is not private for real events.");
+  cardputerUI.updateStatus("Default key active", "Use passphrase command");
   composeBuffer[0] = '\0';
   updateComposeUI();
 }
@@ -958,13 +960,18 @@ void setup() {
 
   isServer = false;
   DeviceSettingsState settings = DeviceSettings::load();
-  passkeyLoadedFromFlash = settings.hasPasskey;
+  passphraseLoadedFromFlash = settings.hasPassphrase;
 
-  if (passkeyLoadedFromFlash) {
-    output.printf("Using saved passkey: %06lu\n", (unsigned long)currentPasskey);
-    cardputerUI.updateStatus("Saved PIN loaded", "Mesh passkey from flash");
+  if (passphraseLoadedFromFlash) {
+    const bool defaultKey = strcmp(currentPassphrase, DEFAULT_PASSPHRASE) == 0;
+    output.printf("Using saved passphrase: %s\n", defaultKey ? "default 01234567" : "custom (hidden)");
+    if (defaultKey) {
+      output.println("WARNING: default passphrase is not private for real events.");
+    }
+    cardputerUI.updateStatus(defaultKey ? "Default key loaded" : "Saved key loaded",
+                             defaultKey ? "Change before events" : "Mesh passphrase from flash");
   } else {
-    configurePasskey();
+    configurePassphrase();
   }
 
 #if BLE_UART_ENABLED
@@ -978,7 +985,7 @@ void setup() {
 
 #if MESH_ENABLED
   cardputerUI.updateStatus("Starting mesh", "ESP-NOW channel 1");
-  if (meshMgr.begin(unitName.c_str(), currentPasskey)) {
+  if (meshMgr.begin(unitName.c_str(), currentPassphrase)) {
     output.println("Mesh networking enabled (ESP-NOW)");
     meshMgr.onMessage(onMeshMessage);
     meshMgr.onPeerUpdate(onMeshPeerUpdate);

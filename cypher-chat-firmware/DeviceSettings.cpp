@@ -1,4 +1,5 @@
 #include "DeviceSettings.h"
+#include "MeshCrypto.h"
 #include <Preferences.h>
 
 DeviceSettingsState DeviceSettings::load() {
@@ -18,15 +19,15 @@ DeviceSettingsState DeviceSettings::load() {
     }
   }
 
-  if (prefs.isKey("passkey")) {
-    uint32_t savedPasskey = prefs.getUInt("passkey", DEFAULT_PASSKEY);
-    if (savedPasskey >= MIN_PASSKEY && savedPasskey <= MAX_PASSKEY) {
-      currentPasskey = savedPasskey;
-      state.hasPasskey = true;
-    }
+  prefs.end();
+
+  char savedPassphrase[MAX_PASSPHRASE_LEN + 1];
+  if (MeshCrypto::loadPassphrase(savedPassphrase, sizeof(savedPassphrase))) {
+    strncpy(currentPassphrase, savedPassphrase, MAX_PASSPHRASE_LEN);
+    currentPassphrase[MAX_PASSPHRASE_LEN] = '\0';
+    state.hasPassphrase = true;
   }
 
-  prefs.end();
   return state;
 }
 
@@ -44,18 +45,11 @@ bool DeviceSettings::saveName(const char* name) {
   return written > 0;
 }
 
-bool DeviceSettings::savePasskey(uint32_t passkey) {
-  if (passkey < MIN_PASSKEY || passkey > MAX_PASSKEY) {
+bool DeviceSettings::savePassphrase(const char* passphrase) {
+  if (!passphrase || strlen(passphrase) < MIN_PASSPHRASE_LEN || strlen(passphrase) > MAX_PASSPHRASE_LEN) {
     return false;
   }
-
-  Preferences prefs;
-  if (!prefs.begin("device", false)) {
-    return false;
-  }
-  size_t written = prefs.putUInt("passkey", passkey);
-  prefs.end();
-  return written > 0;
+  return MeshCrypto::savePassphrase(passphrase);
 }
 
 bool DeviceSettings::clear() {

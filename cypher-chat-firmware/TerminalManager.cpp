@@ -14,7 +14,7 @@ TerminalManager terminalMgr;
 
 // External references
 extern String unitName;
-extern uint32_t currentPasskey;
+extern char currentPassphrase[];
 extern bool isServer;
 extern String messageHistory[10];
 extern int historyCount;
@@ -44,7 +44,7 @@ const CommandDesc TerminalManager::commands[] = {
 
   // Configuration commands
   {"name",      nullptr, "<name>",  "Change unit name",                                     CAT_CONFIG},
-  {"passkey",   "pk",   "<6dig>",   "Change passkey (requires restart)",                    CAT_CONFIG},
+  {"passphrase", "pp",  "<8-64>",   "Change mesh passphrase (requires restart)",            CAT_CONFIG},
   {"mode",      nullptr, "<mode>",  "Set output mode (quiet/normal/verbose/monitor)",       CAT_CONFIG},
   {"ansi",      nullptr, "<on/off>", "Enable/disable ANSI colors",                          CAT_CONFIG},
 
@@ -557,8 +557,8 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
   // Configuration commands
   else if (strcmp(cmd, "name") == 0) {
     cmdName(args);
-  } else if (strcmp(cmd, "passkey") == 0) {
-    cmdPasskey(args);
+  } else if (strcmp(cmd, "passphrase") == 0) {
+    cmdPassphrase(args);
   } else if (strcmp(cmd, "mode") == 0) {
     cmdMode(args);
   } else if (strcmp(cmd, "ansi") == 0) {
@@ -706,25 +706,31 @@ void TerminalManager::cmdName(const char* newName) {
   output.println("Saved. Restart recommended for BLE and mesh identity to fully refresh.");
 }
 
-void TerminalManager::cmdPasskey(const char* newKey) {
-  if (strlen(newKey) != PASSKEY_DIGITS) {
-    output.print("Error: Passkey must be exactly ");
-    output.print(PASSKEY_DIGITS);
-    output.println(" digits");
+void TerminalManager::cmdPassphrase(const char* newPhrase) {
+  const size_t len = strlen(newPhrase);
+  if (len < MIN_PASSPHRASE_LEN || len > MAX_PASSPHRASE_LEN) {
+    output.println("Error: Passphrase must be 8-64 printable characters");
     return;
   }
 
-  uint32_t passkey = atoi(newKey);
-  if (passkey < MIN_PASSKEY || passkey > MAX_PASSKEY) {
-    output.println("Error: Passkey out of range (100000-999999)");
+  for (size_t i = 0; i < len; i++) {
+    if (newPhrase[i] < 0x20 || newPhrase[i] > 0x7E) {
+      output.println("Error: Passphrase must use printable ASCII characters");
+      return;
+    }
+  }
+
+  strncpy(currentPassphrase, newPhrase, MAX_PASSPHRASE_LEN);
+  currentPassphrase[MAX_PASSPHRASE_LEN] = '\0';
+  if (!DeviceSettings::savePassphrase(currentPassphrase)) {
+    output.println("Error: Could not save passphrase");
     return;
   }
 
-  currentPasskey = passkey;
-  DeviceSettings::savePasskey(currentPasskey);
-  output.print("Passkey changed to: ");
-  output.println(currentPasskey);
-  output.println("Saved. Restart required for mesh authentication to use it.");
+  output.println("Passphrase saved (hidden). Restart required for mesh crypto to use it.");
+  if (strcmp(currentPassphrase, DEFAULT_PASSPHRASE) == 0) {
+    output.println("WARNING: default passphrase is not private for real events.");
+  }
 }
 
 void TerminalManager::cmdMode(const char* modeStr) {
@@ -938,7 +944,7 @@ void TerminalManager::cmdVersion() {
 #else
   printColored("ble-uart ", COLOR_DIM);
 #endif
-  printColored("HMAC-SHA256\n", COLOR_GREEN);
+  printColored("AES-256-GCM v2\n", COLOR_GREEN);
 
   output.println();
 }
@@ -1183,7 +1189,7 @@ void TerminalManager::displayConfigMenu() {
   output.println("================================================");
   output.println(" Use command mode to change settings:           ");
   output.println("   name <newname>  - Change unit name           ");
-  output.println("   passkey <6dig>  - Change passkey             ");
+  output.println("   passphrase <8-64> - Change mesh passphrase   ");
   output.println("   mode <mode>     - Change terminal mode       ");
   output.println("================================================");
   output.println(" [0] Back to Main Menu                          ");
@@ -1380,9 +1386,17 @@ void TerminalManager::printConfiguration() {
   output.println(unitName);
   output.print("Role: ");
   output.println(isServer ? "SERVER" : "CLIENT");
-  output.print("Passkey: ");
-  output.print(currentPasskey);
-  output.println(" (configured)");
+  output.print("Mesh Security: ");
+  output.println("AES-256-GCM protocol 0x02");
+  output.print("Passphrase: ");
+  if (strcmp(currentPassphrase, DEFAULT_PASSPHRASE) == 0) {
+    output.println("default 01234567 (change before real events)");
+  } else {
+    output.println("custom (stored encrypted)");
+  }
+#if BLE_UART_ENABLED
+  output.println("BLE UART: open local terminal access; protect physical/BLE proximity.");
+#endif
   output.print("Terminal Mode: ");
   switch (mode) {
     case TERM_QUIET: output.println("QUIET"); break;
@@ -1449,15 +1463,15 @@ void TerminalManager::logMessage(const char* msg, bool isOutgoing, bool delivere
   output.println(formatted);
 }
 
-void TerminalManager::logHMAC(bool verified, const char* message) {
+void TerminalManager::logCrypto(bool verified, const char* message) {
   if (!enabled || mode < TERM_VERBOSE) return;
   if (mode == TERM_MONITOR) return;
 
   if (verified) {
-    printColored("[HMAC] OK Signature verified: ", COLOR_GREEN);
+    printColored("[CRYPTO] OK AEAD verified: ", COLOR_GREEN);
     output.println(message);
   } else {
-    printColored("[HMAC] FAIL Verification FAILED: ", COLOR_RED);
+    printColored("[CRYPTO] FAIL AEAD rejected: ", COLOR_RED);
     output.println(message);
   }
 }

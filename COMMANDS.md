@@ -190,7 +190,7 @@ send 4    # Send ALL GOOD
 **Output:**
 - Unit name
 - Role
-- Passkey status
+- Passphrase status
 - Terminal mode
 **Example:** `config` or `cfg`
 
@@ -203,11 +203,11 @@ send 4    # Send ALL GOOD
 **Example:** `name RESCUE_01`
 **Notes:** Restart required for BLE advertising update
 
-### `passkey <6-digit>`
-**Alias:** `pk`
-**Description:** Change HMAC passkey (6 digits: 100000-999999)
-**Example:** `passkey 654321` or `pk 654321`
-**Notes:** Restart required to apply
+### `passphrase <8-64 chars>`
+**Alias:** `pp`
+**Description:** Change the shared secure mesh passphrase
+**Example:** `passphrase event-long-shared-secret` or `pp event-long-shared-secret`
+**Notes:** Restart required to apply. Do not use the default `01234567` for real events.
 
 ### `mode <mode>`
 **Description:** Set terminal output mode
@@ -271,7 +271,7 @@ send 4    # Send ALL GOOD
 **Status:** Coming soon
 
 ### `verify`
-**Description:** Verify passkey hash is correct
+**Description:** Verify stored mesh security settings
 **Example:** `verify`
 **Status:** Coming soon
 
@@ -619,7 +619,7 @@ Press **TAB** to autocomplete commands or show matching options.
 
 ### VERBOSE Mode
 - Full debug output
-- HMAC verification
+- AEAD verification
 - Button press events
 - All system events
 

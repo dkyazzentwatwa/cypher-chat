@@ -6,11 +6,17 @@ Legacy folders are kept as compatibility references during migration. New boards
 
 ## Shared Defaults
 
-- Mesh protocol: `0x01`
-- Starter mesh key/passkey: `123456`
+- Mesh protocol: secure-only `0x02`
+- Starter mesh passphrase: `01234567`
 - First-boot unattended setup timeout: 15 seconds
 - ESP-NOW heartbeat discovery: 15 seconds
 - Terminal baud: `115200`
+
+Protocol `0x02` encrypts every mesh payload with AES-256-GCM using keys derived
+from the shared 8-64 character passphrase. There is no legacy plaintext or
+HMAC-only receive/transmit compatibility in the unified firmware. The default
+passphrase is for convenience only; change it on every device before a real
+event.
 
 ## Supported Profiles
 
@@ -77,8 +83,9 @@ Waveshare touch dashboard controls:
 - Tap SOS: shows terminal command guidance only
 
 The Waveshare AMOLED and 1.47 LCD profiles are display-first: settings,
-passkey changes, restart, and SOS broadcast sending stay in the USB/BLE
-terminal commands.
+passphrase changes, restart, and SOS broadcast sending stay in the USB/BLE
+terminal commands. Mesh traffic is encrypted, but BLE UART remains open local
+terminal access by design, so keep physical/BLE proximity in your trust model.
 
 ## Upload And Monitor
 

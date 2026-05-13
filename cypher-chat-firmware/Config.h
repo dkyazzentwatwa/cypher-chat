@@ -5,21 +5,20 @@
 
 #define PROJECT_NAME "CYPHER_CHAT_FIRMWARE"
 #define DEFAULT_UNIT_NAME DEFAULT_PROFILE_UNIT_NAME
-#define DEFAULT_PASSKEY 123456
-#define FIRMWARE_VERSION "0.3.0-unified-profiles"
+#define DEFAULT_PASSPHRASE "01234567"
+#define FIRMWARE_VERSION "0.4.0-secure-mesh"
 
 extern String unitName;
-extern uint32_t currentPasskey;
+extern char currentPassphrase[];
 extern bool isServer;
 
 #define MAX_MESSAGE_SIZE 128
 #define MIN_MESSAGE_SIZE 1
 #define MAX_UNIT_NAME_LEN 16
-#define MIN_PASSKEY 100000
-#define MAX_PASSKEY 999999
-#define PASSKEY_DIGITS 6
-#define HMAC_SIZE 8
-#define HMAC_HEX_SIZE (HMAC_SIZE * 2)
+#define MIN_PASSPHRASE_LEN 8
+#define MAX_PASSPHRASE_LEN 64
+
+#define MESH_PROTOCOL_VERSION 0x02
 
 #define TERMINAL_BAUD SERIAL_BAUD
 #define TERMINAL_ENABLED true

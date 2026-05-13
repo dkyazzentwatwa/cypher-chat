@@ -154,7 +154,7 @@ private:
 
   // Command handlers - Configuration
   void cmdName(const char* newName);
-  void cmdPasskey(const char* newKey);
+  void cmdPassphrase(const char* newPhrase);
   void cmdMode(const char* modeStr);
   void cmdAnsi(const char* args);
 
@@ -211,7 +211,7 @@ public:
   void logEvent(const char* level, const char* message);
   void logConnection(ConnectionState state);
   void logMessage(const char* msg, bool isOutgoing, bool delivered);
-  void logHMAC(bool verified, const char* message);
+  void logCrypto(bool verified, const char* message);
   void logEmergency(bool active);
   void logButtonPress(int buttonIndex, ButtonEvent event);
 };

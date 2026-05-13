@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "ESP32_NOW.h"
+#include "MeshCrypto.h"
 #include <esp_mac.h>
 #include <WiFi.h>
 #include <vector>
@@ -13,7 +14,8 @@
  * Features:
  * - Multi-hop message relay with TTL
  * - Store-and-forward for offline nodes
- * - Message deduplication (seen cache)
+ * - AES-256-GCM application-layer payload encryption
+ * - Message deduplication (seen cache) and replay protection
  * - Automatic peer discovery
  * - Works alongside BLE (hybrid mode)
  *
@@ -31,6 +33,8 @@
 #define MESH_PEER_TIMEOUT_MS  60000   // Peer considered offline after 60s
 #define MESH_HEARTBEAT_MS     15000   // Heartbeat interval
 #define MESH_CHANNEL          1       // WiFi channel for ESP-NOW
+#define MESH_MAX_PLAINTEXT    (MESH_MAX_PAYLOAD - MESH_CRYPTO_OVERHEAD)
+#define MESH_ID_RESERVE_BLOCK 1024
 
 // Message types for mesh protocol
 enum MeshMessageType : uint8_t {
@@ -44,7 +48,7 @@ enum MeshMessageType : uint8_t {
 
 // Mesh message header (fixed 32 bytes for efficiency)
 struct __attribute__((packed)) MeshHeader {
-  uint8_t  version;           // Protocol version (0x01)
+  uint8_t  version;           // Protocol version (0x02)
   uint8_t  type;              // MeshMessageType
   uint8_t  ttl;               // Time-to-live (hops remaining)
   uint8_t  hopCount;          // Number of hops taken
@@ -154,10 +158,10 @@ public:
   /**
    * Initialize ESP-NOW mesh networking
    * @param unitName This device's identifier
-   * @param passkey Shared passkey for HMAC
+   * @param passphrase Shared mesh passphrase for key derivation
    * @return true if initialization successful
    */
-  bool begin(const char* unitName, uint32_t passkey);
+  bool begin(const char* unitName, const char* passphrase);
 
   /**
    * Stop mesh networking and release resources
@@ -294,13 +298,12 @@ private:
   // Heartbeat
   void sendHeartbeat();
 
-  // HMAC authentication
-  bool signPacket(MeshPacket* packet);
-  bool verifyPacket(const MeshPacket* packet);
-
   // Utility
   uint32_t generateMessageId();
   bool addEspNowPeer(const uint8_t* mac);
+  bool reserveMessageIds();
+  size_t encryptedWireSize(const MeshPacket* packet) const;
+  bool encryptPacket(MeshPacket* packet);
 
   // Peer management for new API
   MeshPeer* findOrCreatePeer(const uint8_t* mac);
@@ -310,7 +313,7 @@ private:
   // State
   bool _running;
   char _unitName[17];
-  uint32_t _passkey;
+  char _passphrase[65];
   uint8_t _myMac[6];
   GPSCoordinates _myGPS;
 
@@ -340,6 +343,7 @@ private:
   uint32_t _msgsRelayed;
   uint32_t _msgsDropped;
   uint32_t _messageIdCounter;
+  uint32_t _messageIdReserveEnd;
 };
 
 // Global instance
