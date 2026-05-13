@@ -5,12 +5,58 @@ on: [push, pull_request]
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: basic-esp32
+            fqbn: esp32:esp32:esp32:PartitionScheme=huge_app
+            profile: BOARD_PROFILE_BASIC_ESP32
+          - name: esp32-32d
+            fqbn: esp32:esp32:esp32:PartitionScheme=huge_app
+            profile: BOARD_PROFILE_ESP32_32D
+          - name: cardputer-adv
+            fqbn: m5stack:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc
+            profile: BOARD_PROFILE_CARDPUTER_ADV
+          - name: waveshare-touch-amoled-18
+            fqbn: esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=app3M_fat9M_16MB
+            profile: BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18
+          - name: waveshare-touch-lcd-147
+            fqbn: esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=app3M_fat9M_16MB
+            profile: BOARD_PROFILE_WAVESHARE_TOUCH_LCD_147
+          - name: xiao-esp32c3-oled-gps-3btn
+            fqbn: esp32:esp32:XIAO_ESP32C3:PartitionScheme=no_ota
+            profile: BOARD_PROFILE_XIAO_ESP32C3_OLED_GPS_3BTN
+    name: Compile ${{ matrix.name }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
       - uses: arduino/setup-arduino-cli@v1
         with:
           version: latest
-      - run: arduino-cli core update-index
-      - run: arduino-cli core install esp32:esp32
-      - run: arduino-cli lib install "NimBLE-Arduino" "Adafruit GFX Library" "Adafruit SSD1306"
-      - run: arduino-cli compile --fqbn esp32:esp32:esp32 cypher-chat.ino
+
+      - name: Install board cores
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+          arduino-cli core install m5stack:esp32
+
+      - name: Install libraries
+        run: |
+          arduino-cli lib install \
+            "NimBLE-Arduino" \
+            "Adafruit GFX Library" \
+            "Adafruit SSD1306" \
+            "Adafruit ST7735 and ST7789 Library" \
+            "Adafruit XCA9554" \
+            "GFX Library for Arduino" \
+            "XPowersLib" \
+            "M5Cardputer"
+          arduino-cli lib install --git-url https://github.com/Xk-w/Arduino_DriveBus
+
+      - name: Compile unified firmware
+        run: |
+          arduino-cli compile \
+            --fqbn "${{ matrix.fqbn }}" \
+            --build-property "build.extra_flags=-DESP32 -DBOARD_PROFILE=${{ matrix.profile }}" \
+            cypher-chat-firmware
