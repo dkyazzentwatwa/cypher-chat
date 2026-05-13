@@ -161,8 +161,9 @@ constexpr int PIN_BUTTON_3 = 36;
 constexpr bool BUTTON_ACTIVE_LOW = true;
 constexpr bool BUTTON_USE_INTERNAL_PULLUP = false;
 #elif BOARD_PROFILE == BOARD_PROFILE_CARDPUTER_ADV
-constexpr uint16_t LCD_WIDTH = 240;
-constexpr uint16_t LCD_HEIGHT = 135;
+// Raw ST7789 panel geometry. Rotation 1 gives the logical 240x135 UI.
+constexpr uint16_t LCD_WIDTH = 135;
+constexpr uint16_t LCD_HEIGHT = 240;
 constexpr uint8_t LCD_ROTATION = 1;
 constexpr uint8_t DISPLAY_TEXT_SIZE = 1;
 constexpr int PIN_CARDPUTER_IR = 44;

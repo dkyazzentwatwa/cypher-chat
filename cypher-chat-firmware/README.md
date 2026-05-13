@@ -18,7 +18,7 @@ Legacy folders are kept as compatibility references during migration. New boards
 |---------|------------|-------------------|
 | `BOARD_PROFILE_BASIC_ESP32` | `esp32:esp32:esp32:PartitionScheme=huge_app` | No display, terminal-only, GPS off |
 | `BOARD_PROFILE_ESP32_32D` | `esp32:esp32:esp32:PartitionScheme=huge_app` | SSD1306 on GPIO21/22, 3 GPIO buttons, GPS off |
-| `BOARD_PROFILE_CARDPUTER_ADV` | `m5stack:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc` | M5GFX display, Cardputer keyboard, M5 power |
+| `BOARD_PROFILE_CARDPUTER_ADV` | `m5stack:esp32:m5stack_cardputer:FlashSize=8M,PartitionScheme=default_8MB,USBMode=hwcdc,CDCOnBoot=cdc` | M5GFX display, Cardputer keyboard, M5 power, raw 135x240 panel rotated to 240x135 |
 | `BOARD_PROFILE_WAVESHARE_TOUCH_AMOLED_18` | `esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=app3M_fat9M_16MB` | SH8601 AMOLED, touch, AXP2101 power |
 | `BOARD_PROFILE_WAVESHARE_TOUCH_LCD_147` | `esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=default,CDCOnBoot=cdc,PartitionScheme=app3M_fat9M_16MB` | ST7789 LCD, touch |
 | `BOARD_PROFILE_XIAO_ESP32C3_OLED_GPS_3BTN` | `esp32:esp32:XIAO_ESP32C3:PartitionScheme=no_ota` | SSD1306, 3 GPIO buttons, UART GPS |
