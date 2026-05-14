@@ -13,6 +13,16 @@
 #include "DeviceSettings.h"
 #include "UsbConsole.h"
 
+#if __has_include(<CypherPuterReturn.h>)
+#include <CypherPuterReturn.h>
+#define CYPHER_CHAT_HAS_RETURN_HELPER 1
+#else
+#include <Preferences.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#define CYPHER_CHAT_HAS_RETURN_HELPER 0
+#endif
+
 #if BOARD_HAS_CARDPUTER_INPUT
 #include <M5Cardputer.h>
 #endif
@@ -68,6 +78,7 @@ void handleMenuKey(char c, bool fnHeld);
 bool saveEditedName();
 bool saveEditedPassphrase();
 const char* terminalModeLabel();
+void returnToCypherLauncher();
 
 #if MESH_ENABLED
 void onMeshMessage(const MeshPacket* packet, const uint8_t* senderMac, int8_t rssi) {
@@ -289,7 +300,7 @@ int menuItemCount(CardputerMenuPage page) {
       return count > 0 ? count : 2;
     }
     case MENU_PAGE_SETTINGS: return 5;
-    case MENU_PAGE_SYSTEM: return 5;
+    case MENU_PAGE_SYSTEM: return 6;
     case MENU_PAGE_EMERGENCY: return 3;
     default: return 0;
   }
@@ -379,6 +390,34 @@ void clearLocalHistory() {
   cardputerUI.updateStatus("Local history cleared", "");
 }
 
+void returnToCypherLauncher() {
+  output.println("Returning to Cypher OS launcher...");
+  cardputerUI.updateStatus("Returning", "Cypher OS launcher");
+  cardputerUI.refresh(true);
+  delay(400);
+#if CYPHER_CHAT_HAS_RETURN_HELPER
+  cypherPuterReturnToLauncher(250);
+#else
+  Preferences prefs;
+  if (prefs.begin("cyputeros", false)) {
+    prefs.putBool("returnOnce", true);
+    prefs.putBool("bootToApp", false);
+    prefs.end();
+  }
+  const esp_partition_t* launcher = esp_partition_find_first(
+      ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, "app0");
+  if (!launcher) {
+    launcher = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+  }
+  if (launcher) {
+    esp_ota_set_boot_partition(launcher);
+  }
+  delay(250);
+  ESP.restart();
+#endif
+}
+
 void renderMenu() {
 #if BOARD_IS_WAVESHARE_VISUAL_DISPLAY
   cardputerUI.setScreen(CARD_SCREEN_STATUS);
@@ -427,9 +466,9 @@ void renderMenu() {
 
   if (menuPage == MENU_PAGE_SYSTEM) {
     static const char* const systemItems[] = {
-      "Version", "Memory + uptime", "Clear local history", "Restart", "Back"
+      "Version", "Memory + uptime", "Clear local history", "Return to launcher", "Restart", "Back"
     };
-    cardputerUI.drawMenuList("System", systemItems, 5, menuSelected, menuScroll, "Enter run  Bksp back");
+    cardputerUI.drawMenuList("System", systemItems, 6, menuSelected, menuScroll, "Enter run  Bksp back");
     return;
   }
 
@@ -598,6 +637,8 @@ void menuEnter() {
       clearLocalHistory();
       renderMenu();
     } else if (menuSelected == 3) {
+      returnToCypherLauncher();
+    } else if (menuSelected == 4) {
       cardputerUI.updateStatus("Restarting", "3 seconds");
       cardputerUI.refresh(true);
       delay(3000);

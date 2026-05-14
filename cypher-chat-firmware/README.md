@@ -118,6 +118,7 @@ status
 peers
 send 1
 emergency
+launcher
 gps
 dump
 logs
@@ -128,3 +129,7 @@ peername 3FA4 Base
 trust 3FA4 trusted
 resetsettings
 ```
+
+On Cardputer ADV builds packaged for Cypher OS, open `Menu -> System -> Return
+to launcher` to restart back into the resident launcher. The same path is
+available from USB/BLE terminal with `launcher` or `return`.

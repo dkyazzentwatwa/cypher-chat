@@ -21,6 +21,7 @@ extern int historyCount;
 extern void simulateButtonPress(int buttonIndex);
 extern void broadcastEmergency();
 extern void cancelEmergency();
+extern void returnToCypherLauncher();
 extern bool emergencyActive;
 
 // Command registry - all available commands with metadata
@@ -53,6 +54,7 @@ const CommandDesc TerminalManager::commands[] = {
   {"clear",     "cls",  nullptr,    "Clear terminal screen",                                CAT_SYSTEM},
   {"menu",      nullptr, nullptr,   "Switch to interactive menu mode",                      CAT_SYSTEM},
   {"history",   "hist", nullptr,    "Show command history",                                 CAT_SYSTEM},
+  {"launcher",  "return", nullptr,  "Return to Cypher OS launcher",                         CAT_SYSTEM},
   {"restart",   "reboot", nullptr,  "Restart the device",                                   CAT_SYSTEM},
   {"uptime",    nullptr, nullptr,   "Show system uptime",                                   CAT_SYSTEM},
   {"memory",    "mem",  nullptr,    "Show memory usage",                                    CAT_SYSTEM},
@@ -573,6 +575,8 @@ void TerminalManager::executeCommand(const char* verb, const char* args) {
     cmdMenu();
   } else if (strcmp(cmd, "history") == 0) {
     cmdHistory();
+  } else if (strcmp(cmd, "launcher") == 0) {
+    cmdLauncher();
   } else if (strcmp(cmd, "restart") == 0) {
     cmdRestart();
   } else if (strcmp(cmd, "uptime") == 0) {
@@ -600,6 +604,7 @@ void TerminalManager::handleMenuInput(char input) {
         case '4': menuState = MENU_CONFIG; displayConfigMenu(); break;
         case '5': cmdEmergency(); delay(2000); displayMainMenu(); break;
         case '6': cmdMenu(); break;  // Switch to command mode
+        case '7': cmdLauncher(); break;
         case '0': menuState = MENU_NONE; output.println("Exiting menu mode."); printPrompt(); break;
         default: output.println("Invalid choice."); delay(500); displayMainMenu(); break;
       }
@@ -757,6 +762,10 @@ void TerminalManager::cmdRestart() {
   output.println("Restarting ESP32 in 3 seconds...");
   delay(3000);
   ESP.restart();
+}
+
+void TerminalManager::cmdLauncher() {
+  returnToCypherLauncher();
 }
 
 void TerminalManager::cmdUptime() {
@@ -1152,6 +1161,7 @@ void TerminalManager::displayMainMenu() {
   output.println(" [4] Configuration                              ");
   output.println(" [5] EMERGENCY Broadcast                        ");
   output.println(" [6] Switch to Command Mode                     ");
+  output.println(" [7] Return to Cypher OS Launcher               ");
   output.println(" [0] Exit Menu                                  ");
   output.println("================================================");
   output.print("Enter choice: ");

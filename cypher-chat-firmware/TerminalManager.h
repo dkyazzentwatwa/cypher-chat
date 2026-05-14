@@ -22,7 +22,7 @@
 // Terminal configuration
 #define TERM_HISTORY_SIZE 10      // Number of commands to remember
 #define TERM_MAX_CMD_LEN 128      // Max command length
-#define TERM_NUM_COMMANDS 25      // Total registered commands
+#define TERM_NUM_COMMANDS 26      // Total registered commands
 
 enum TerminalMode {
   TERM_QUIET,       // Minimal output (errors only)
@@ -160,6 +160,7 @@ private:
 
   // Command handlers - System
   void cmdRestart();
+  void cmdLauncher();
   void cmdUptime();
   void cmdMemory();
   void cmdHelp(const char* args);
